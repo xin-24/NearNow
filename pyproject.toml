@@ -1,0 +1,10 @@
+[project]
+name = "nearnow-planner"
+version = "0.1.0"
+description = "邻刻计划 NearNow: local short-term activity planning and execution agent."
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+

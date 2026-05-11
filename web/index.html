@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>邻刻计划 NearNow</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace">
+        <div class="intro">
+          <div>
+            <p class="eyebrow">Local Activity Agent</p>
+            <h1>邻刻计划 <span>NearNow</span></h1>
+            <p class="lead">一句话安排附近活动、餐厅、路线和可执行预约。</p>
+          </div>
+          <div class="status">
+            <span class="dot"></span>
+            Mock Provider
+          </div>
+        </div>
+
+        <section class="planner">
+          <div class="input-panel">
+            <label for="goal">活动目标</label>
+            <textarea id="goal" rows="5">今天下午是空的，想和老婆孩子、朋友出去玩几个小时，别离家太远，帮我安排一下。</textarea>
+
+            <div class="examples" aria-label="示例目标">
+              <button data-example="和闺蜜下午逛逛，想拍照喝下午茶，不想太吵。">闺蜜</button>
+              <button data-example="周末和恋人约会，想有点仪式感，别太贵。">恋人</button>
+              <button data-example="下午带狗出去玩，顺便找个能带宠物的地方吃饭。">宠物</button>
+              <button data-example="陪爸妈附近走走，别太累，晚饭清淡一点。">老人</button>
+              <button data-example="和同事做个小团建，预算人均 150，最好交通都方便。">同事</button>
+            </div>
+
+            <div class="form-grid">
+              <label>
+                出发地
+                <input id="origin" value="望京 SOHO" />
+              </label>
+              <label>
+                城市
+                <input id="city" value="北京" />
+              </label>
+            </div>
+
+            <div class="actions">
+              <button id="planBtn" class="primary">生成方案</button>
+              <button id="confirmBtn" disabled>确认并执行</button>
+            </div>
+          </div>
+
+          <div class="visual-panel">
+            <div class="route-visual" aria-label="路线示意">
+              <div class="node home">起点</div>
+              <div class="path"></div>
+              <div class="node activity">活动</div>
+              <div class="path short"></div>
+              <div class="node food">餐厅</div>
+            </div>
+            <div class="metric-grid">
+              <div>
+                <strong id="partySize">-</strong>
+                <span>同行规模</span>
+              </div>
+              <div>
+                <strong id="transportMode">-</strong>
+                <span>推荐交通</span>
+              </div>
+              <div>
+                <strong id="actionCount">-</strong>
+                <span>待执行动作</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="output" class="output empty">
+          <p>生成后会在这里展示时间轴、参与者约束、路线和待执行动作。</p>
+        </section>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
+
