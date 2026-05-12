@@ -7,34 +7,43 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <section class="workspace">
-        <div class="intro">
-          <div>
-            <p class="eyebrow">Local Activity Agent</p>
-            <h1>邻刻计划 <span>NearNow</span></h1>
-            <p class="lead">一句话安排附近活动、餐厅、路线和可执行预约。</p>
-          </div>
-          <div class="status">
-            <span class="dot"></span>
-            Mock Provider
-          </div>
+    <div class="ambient" aria-hidden="true">
+      <div class="mesh mesh-a"></div>
+      <div class="mesh mesh-b"></div>
+      <div class="grain"></div>
+    </div>
+
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span>
+        </div>
+        <div>
+          <h1>邻刻计划 <span>NearNow</span></h1>
+          <p>Local activity agent</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="provider-pill"><span></span> Mock Provider</div>
+        <button id="themeBtn" class="icon-button" type="button" aria-label="切换深浅色">
+          <span class="theme-icon"></span>
+        </button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section id="inputView" class="view input-view">
+        <div class="prompt-copy">
+          <p class="eyebrow">Planning · Booking · Route</p>
+          <h2>告诉我这几个小时想怎么过</h2>
+          <p>我会把参与者、地点、交通、餐厅和可执行动作整理成一条计划。</p>
         </div>
 
-        <section class="planner">
-          <div class="input-panel">
-            <label for="goal">活动目标</label>
-            <textarea id="goal" rows="5">今天下午是空的，想和老婆孩子、朋友出去玩几个小时，别离家太远，帮我安排一下。</textarea>
-
-            <div class="examples" aria-label="示例目标">
-              <button data-example="和闺蜜下午逛逛，想拍照喝下午茶，不想太吵。">闺蜜</button>
-              <button data-example="周末和恋人约会，想有点仪式感，别太贵。">恋人</button>
-              <button data-example="下午带狗出去玩，顺便找个能带宠物的地方吃饭。">宠物</button>
-              <button data-example="陪爸妈附近走走，别太累，晚饭清淡一点。">老人</button>
-              <button data-example="和同事做个小团建，预算人均 150，最好交通都方便。">同事</button>
-            </div>
-
-            <div class="form-grid">
+        <section class="composer-card">
+          <label class="field-label" for="goal">活动目标</label>
+          <textarea id="goal" rows="5">今天下午是空的，想和老婆孩子、朋友出去玩几个小时，别离家太远，帮我安排一下。</textarea>
+          <div class="composer-footer">
+            <div class="location-strip">
               <label>
                 出发地
                 <input id="origin" value="望京 SOHO" />
@@ -44,44 +53,139 @@
                 <input id="city" value="北京" />
               </label>
             </div>
-
-            <div class="actions">
-              <button id="planBtn" class="primary">生成方案</button>
-              <button id="confirmBtn" disabled>确认并执行</button>
-            </div>
-          </div>
-
-          <div class="visual-panel">
-            <div class="route-visual" aria-label="路线示意">
-              <div class="node home">起点</div>
-              <div class="path"></div>
-              <div class="node activity">活动</div>
-              <div class="path short"></div>
-              <div class="node food">餐厅</div>
-            </div>
-            <div class="metric-grid">
-              <div>
-                <strong id="partySize">-</strong>
-                <span>同行规模</span>
-              </div>
-              <div>
-                <strong id="transportMode">-</strong>
-                <span>推荐交通</span>
-              </div>
-              <div>
-                <strong id="actionCount">-</strong>
-                <span>待执行动作</span>
-              </div>
-            </div>
+            <button id="planBtn" class="primary-action" type="button">
+              <span>生成方案</span>
+            </button>
           </div>
         </section>
 
-        <section id="output" class="output empty">
-          <p>生成后会在这里展示时间轴、参与者约束、路线和待执行动作。</p>
+        <section class="example-grid" aria-label="示例目标">
+          <button data-example="晚上和女朋友约会，想先吃顿日料，然后看场浪漫的电影，不想开车。">
+            <span>浪漫约会</span>
+            <strong>恋人 · 仪式感 · 不开车</strong>
+          </button>
+          <button data-example="今天下午，我和同学想在附近喝杯手冲咖啡，然后找个地方玩一两个小时桌游。">
+            <span>朋友小聚</span>
+            <strong>咖啡 · 桌游 · 附近</strong>
+          </button>
+          <button data-example="下午带狗出去玩，顺便找个能带宠物的地方吃饭。">
+            <span>宠物同行</span>
+            <strong>可携宠 · 公园 · 餐厅</strong>
+          </button>
+          <button data-example="陪爸妈附近走走，别太累，晚饭清淡一点。">
+            <span>陪伴长辈</span>
+            <strong>少走路 · 安静 · 清淡</strong>
+          </button>
         </section>
       </section>
+
+      <section id="analyzingView" class="view process-view" hidden>
+        <div class="progress-ring">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle cx="60" cy="60" r="52" class="track"></circle>
+            <circle id="analyzingArc" cx="60" cy="60" r="52" class="arc"></circle>
+          </svg>
+          <div id="analyzingPercent">0%</div>
+        </div>
+        <h2>Agent 正在规划</h2>
+        <div id="analyzingSteps" class="step-list"></div>
+      </section>
+
+      <section id="proposalView" class="view proposal-view" hidden>
+        <div class="proposal-head">
+          <div>
+            <p class="eyebrow">Generated plan</p>
+            <h2 id="planTitle">为你定制的计划</h2>
+            <p id="planSummary"></p>
+          </div>
+          <button id="editBtn" class="ghost-action" type="button">重新输入</button>
+        </div>
+
+        <section class="insight-grid">
+          <article>
+            <span>同行规模</span>
+            <strong id="partySize">-</strong>
+          </article>
+          <article>
+            <span>推荐交通</span>
+            <strong id="transportMode">-</strong>
+          </article>
+          <article>
+            <span>待执行动作</span>
+            <strong id="actionCount">-</strong>
+          </article>
+          <article>
+            <span>完成时间</span>
+            <strong id="finishTime">-</strong>
+          </article>
+        </section>
+
+        <section class="plan-board">
+          <div class="timeline-column">
+            <h3>时间轴</h3>
+            <div id="timeline" class="timeline"></div>
+          </div>
+          <aside class="side-column">
+            <section>
+              <h3>参与者约束</h3>
+              <div id="participantChips" class="chips"></div>
+            </section>
+            <section>
+              <h3>交通方式比较</h3>
+              <div id="routeChips" class="route-list"></div>
+            </section>
+            <section>
+              <h3>确认后执行</h3>
+              <div id="actionChips" class="chips"></div>
+            </section>
+            <section id="riskSection" hidden>
+              <h3>风险提示</h3>
+              <div id="riskChips" class="chips warning"></div>
+            </section>
+          </aside>
+        </section>
+
+        <div class="dock">
+          <p>确认后才会执行预约、订座和通知。</p>
+          <button id="confirmBtn" class="primary-action" type="button">一键执行</button>
+        </div>
+      </section>
+
+      <section id="executingView" class="view process-view" hidden>
+        <div class="progress-ring">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle cx="60" cy="60" r="52" class="track"></circle>
+            <circle id="executingArc" cx="60" cy="60" r="52" class="arc"></circle>
+          </svg>
+          <div id="executingPercent">0%</div>
+        </div>
+        <h2>Agent 执行中</h2>
+        <div id="executingSteps" class="step-list"></div>
+      </section>
+
+      <section id="successView" class="view success-view" hidden>
+        <div class="success-mark"><span></span></div>
+        <h2>一切安排妥当</h2>
+        <p id="successMessage"></p>
+        <section class="receipt">
+          <div class="receipt-top">
+            <span>NearNow Itinerary</span>
+            <strong id="receiptStatus">执行成功</strong>
+          </div>
+          <div id="receiptItems" class="receipt-items"></div>
+        </section>
+        <button id="newPlanBtn" class="ghost-action" type="button">新建另一个活动</button>
+      </section>
+
+      <section id="errorView" class="view error-view" hidden>
+        <div class="error-card">
+          <h2>需要调整一下</h2>
+          <p id="errorMessage"></p>
+          <button id="backBtn" class="primary-action" type="button">返回修改</button>
+        </div>
+      </section>
     </main>
+
     <script src="/app.js"></script>
   </body>
 </html>
-
