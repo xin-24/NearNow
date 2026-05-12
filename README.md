@@ -77,9 +77,35 @@ python3 -m app.main
 http://127.0.0.1:8000
 ```
 
-网页中点击出发位置输入框内的“定位”按钮可调用浏览器定位授权。前端会先把经纬度降为约 1km 级别的大概位置，再调用后端地址反查接口，将地址按「城市 + 区/县 + 商圈/地标」填回同一个输入框；定位后的地址仍可直接手动修改。地址反查优先使用真实地图服务，失败时回落到 Mock。界面和方案不会展示精确坐标。若拒绝授权，则继续按手动输入的出发地规划。
+网页中点击出发位置输入框内的“定位”按钮可调用浏览器定位授权。前端会先把经纬度降为约 1km 级别的大概位置，再调用后端地址反查接口，将地址按「城市 + 区/县 + 商圈/地标」填回同一个输入框；定位后的地址仍可直接手动修改。地址反查使用真实地图服务，失败时返回错误并提示手动输入，不使用 Mock 地址。界面和方案不会展示精确坐标。若拒绝授权，则继续按手动输入的出发地规划。
 
 手动输入出发地建议使用「城市 + 区/县 + 商圈/地标」格式，例如 `北京 朝阳区 望京 SOHO`、`上海 徐汇区 徐家汇`。如果只填写 `望京 SOHO`，网页会按默认城市归一为 `北京 望京 SOHO`；不需要填写门牌号或精确住址。
+
+## LongCat API
+
+项目已接入 LongCat 的 OpenAI 兼容 Chat Completions API。Agent 会使用 LongCat 增强意图解析和最终计划话术；如果未配置 `LONGCAT_API_KEY` 或 API 调用失败，接口会返回错误，不再使用本地规则或 Mock 数据假装成功。
+
+```bash
+export LONGCAT_API_KEY="你的 LongCat API Key"
+export LONGCAT_MODEL="LongCat-Flash-Chat"
+python3 -m app.main
+```
+
+也可以使用本地 `.env` 文件：
+
+```bash
+cp .env.local.example .env
+# 编辑 .env，填入真实 LONGCAT_API_KEY
+python3 -m app.main
+```
+
+可参考 `.env.example` 查看完整环境变量。当前实现使用官方文档中的 `https://api.longcat.chat/openai/v1/chat/completions` 格式，不额外引入第三方依赖。
+
+环境变量文件建议：
+
+- `.env.example`：GitHub 可上传的安全占位模板。
+- `.env.local.example`：本地真实 Key 模板，复制为 `.env` 后填写真实 `LONGCAT_API_KEY`。
+- `.env`：本地私密配置，已被 `.gitignore` 忽略，不要提交。
 
 命令行试用：
 

@@ -72,7 +72,7 @@ Provider Layer 需要支持三种模式：
 }
 ```
 
-浏览器定位只能直接给出经纬度，不能直接给出街区或商圈名称。前端拿到粗化后的坐标后，需要调用 `reverse_geocode` Provider，把坐标转换为「城市 + 区/县 + 商圈/地标」格式，再填回出发地输入框。当前实现优先使用 OpenStreetMap Nominatim 反查真实地址，失败时回落到本地 Mock；生产模式可替换为高德、Google Maps、Apple MapKit 或内部 Geo 服务。
+浏览器定位只能直接给出经纬度，不能直接给出街区或商圈名称。前端拿到粗化后的坐标后，需要调用 `reverse_geocode` Provider，把坐标转换为「城市 + 区/县 + 商圈/地标」格式，再填回出发地输入框。当前实现使用 OpenStreetMap Nominatim 反查真实地址，失败时返回可恢复错误并提示手动输入，不回落到 Mock 地址；生产模式可替换为高德、Google Maps、Apple MapKit 或内部 Geo 服务。
 
 ### 3.3 定位失败处理
 

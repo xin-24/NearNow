@@ -196,14 +196,3 @@ class OpenStreetMapLocationProvider:
             return "medium"
         return "low"
 
-
-class HybridLocationProvider:
-    def __init__(self) -> None:
-        self.real_provider = OpenStreetMapLocationProvider()
-        self.fallback_provider = MockLocationProvider()
-
-    def reverse_geocode(self, coordinates: Coordinates) -> ApproximateAddress:
-        try:
-            return self.real_provider.reverse_geocode(coordinates)
-        except RuntimeError:
-            return self.fallback_provider.reverse_geocode(coordinates)

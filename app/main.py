@@ -8,13 +8,13 @@ from urllib.parse import unquote
 
 from app.agent.orchestrator import LocalPlannerAgent
 from app.domain.models import Coordinates
-from app.providers.location_provider import HybridLocationProvider
+from app.providers.location_provider import OpenStreetMapLocationProvider
 
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = ROOT / "web"
 AGENT = LocalPlannerAgent()
-LOCATION_PROVIDER = HybridLocationProvider()
+LOCATION_PROVIDER = OpenStreetMapLocationProvider()
 
 
 class NearNowHandler(BaseHTTPRequestHandler):
@@ -88,7 +88,18 @@ class NearNowHandler(BaseHTTPRequestHandler):
                 },
             }
 
-        address = LOCATION_PROVIDER.reverse_geocode(coordinates)
+        try:
+            address = LOCATION_PROVIDER.reverse_geocode(coordinates)
+        except RuntimeError:
+            return {
+                "success": False,
+                "data": None,
+                "error": {
+                    "code": "REVERSE_GEOCODE_FAILED",
+                    "message": "真实地址反查失败，请手动输入城市、区县和商圈/地标。",
+                    "recoverable": True,
+                },
+            }
         return {"success": True, "data": address.to_dict(), "error": None}
 
     def _json(self, payload: dict, status: int = 200) -> None:

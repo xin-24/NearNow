@@ -61,10 +61,11 @@ app/
 ### 阶段 3：Agent 编排
 
 1. 实现 `IntentParser`，从输入中提取时间、人数、偏好。
-2. 实现 `ParticipantConstraintBuilder` 和 `ContextBuilder`，补全默认时间、距离、参与者画像和约束。
-3. 实现 `ToolRouter`，统一调用 Provider 工具。
-4. 实现 `PlanningEngine`，完成硬约束过滤和软约束评分。
-5. 实现 `ResponseGenerator`，生成用户可读方案。
+2. 接入 `LongCatClient` 作为 LLM Provider，用于增强意图解析和最终回复生成；未配置 API Key 或 API 调用失败时必须返回错误，不得使用本地规则或 Mock 数据假装成功。
+3. 实现 `ParticipantConstraintBuilder` 和 `ContextBuilder`，补全默认时间、距离、参与者画像和约束。
+4. 实现 `ToolRouter`，统一调用 Provider 工具。
+5. 实现 `PlanningEngine`，完成硬约束过滤和软约束评分。
+6. 实现 `ResponseGenerator`，生成用户可读方案。
 
 ### 阶段 4：执行闭环
 
@@ -185,6 +186,8 @@ class ExecutionManager:
 必须覆盖：
 
 - `IntentParser` 能从自然语言中提取时间、人数、参与者关系和偏好。
+- `LongCatIntentParser` 在 API 可用时能解析结构化 JSON，在 API 不可用或返回异常时返回可恢复错误。
+- `LongCatResponseGenerator` 在 API 可用时能润色方案，在 API 不可用时返回可恢复错误。
 - `ParticipantConstraintBuilder` 能处理闺蜜、恋人、孩子、宠物、老人、同事等通用角色，而不是只支持题目样例。
 - `PlanningEngine` 能过滤不满足硬约束的活动和餐厅。
 - `PlanningEngine` 能在多个候选方案中选择高分方案。
