@@ -42,6 +42,42 @@
 
 ## 2. Agent API
 
+### 2.0 地址反查
+
+```http
+POST /api/location/reverse-geocode
+```
+
+请求：
+
+```json
+{
+  "coordinates": {
+    "lat": 40.0,
+    "lng": 116.48
+  },
+  "precision": "approximate"
+}
+```
+
+响应中的 `formatted_address` 必须按「城市 + 区/县 + 商圈/地标」返回，供网页自动填入出发地输入框：
+
+```json
+{
+  "success": true,
+  "data": {
+    "city": "北京",
+    "district": "朝阳区",
+    "landmark": "星河广场",
+    "formatted_address": "北京 朝阳区 星河广场",
+    "source": "mock_reverse_geocode",
+    "precision": "approximate_area",
+    "confidence": "high"
+  },
+  "error": null
+}
+```
+
 ### 2.1 生成活动方案
 
 ```http

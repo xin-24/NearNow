@@ -341,24 +341,82 @@ input::placeholder {
 
 .location-strip {
   display: grid;
-  grid-template-columns: 1fr 120px;
-  gap: 12px;
+  grid-template-columns: 1fr;
 }
 
-.location-strip label {
+.location-field {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
 }
 
-.location-strip input {
-  height: 34px;
-  padding: 0 10px;
+.location-input-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 40px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.location-input-shell:focus-within {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.location-strip input {
+  height: 38px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+}
+
+.locate-action {
+  min-height: 30px;
+  margin-right: 4px;
+  padding: 0 11px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.locate-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.locate-action:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.location-status {
+  margin: -4px 12px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.location-status[data-state="success"] {
+  color: var(--green);
+}
+
+.location-status[data-state="pending"] {
+  color: var(--primary);
+}
+
+.location-status[data-state="error"] {
+  color: #ef4444;
 }
 
 .primary-action,

@@ -63,6 +63,15 @@ class UserContext:
     home_location: str | None = None
     coordinates: Coordinates | None = None
     location_permission_granted: bool = False
+    location_source: str = "manual"
+    accuracy_m: float | None = None
+    precision: str = "manual"
+    manual_location_format: str | None = None
+    district: str | None = None
+    landmark: str | None = None
+    formatted_address: str | None = None
+    address_source: str | None = None
+    address_confidence: str | None = None
 
 
 @dataclass

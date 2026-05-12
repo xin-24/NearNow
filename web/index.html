@@ -44,19 +44,24 @@
           <textarea id="goal" rows="5">今天下午是空的，想和老婆孩子、朋友出去玩几个小时，别离家太远，帮我安排一下。</textarea>
           <div class="composer-footer">
             <div class="location-strip">
-              <label>
-                出发地
-                <input id="origin" value="望京 SOHO" />
-              </label>
-              <label>
-                城市
-                <input id="city" value="北京" />
+              <label class="location-field">
+                出发位置
+                <span class="location-input-shell">
+                  <input
+                    id="origin"
+                    value="北京 朝阳区 望京 SOHO"
+                    placeholder="城市 + 区/县 + 商圈/地标，如 北京 朝阳区 望京 SOHO"
+                    aria-describedby="locationStatus"
+                  />
+                  <button id="locateBtn" class="locate-action" type="button">定位</button>
+                </span>
               </label>
             </div>
             <button id="planBtn" class="primary-action" type="button">
               <span>生成方案</span>
             </button>
           </div>
+          <p id="locationStatus" class="location-status">格式：城市 + 区/县 + 商圈/地标。可手动输入，也可定位后直接修改。</p>
         </section>
 
         <section class="example-grid" aria-label="示例目标">

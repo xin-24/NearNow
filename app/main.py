@@ -7,11 +7,14 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from app.agent.orchestrator import LocalPlannerAgent
+from app.domain.models import Coordinates
+from app.providers.location_provider import HybridLocationProvider
 
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_ROOT = ROOT / "web"
 AGENT = LocalPlannerAgent()
+LOCATION_PROVIDER = HybridLocationProvider()
 
 
 class NearNowHandler(BaseHTTPRequestHandler):
@@ -30,6 +33,9 @@ class NearNowHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/agent/confirm":
             self._json(AGENT.confirm(payload))
+            return
+        if self.path == "/api/location/reverse-geocode":
+            self._json(self._reverse_geocode(payload))
             return
         self._json({"success": False, "data": None, "error": {"code": "NOT_FOUND", "message": "接口不存在"}}, 404)
 
@@ -64,6 +70,27 @@ class NearNowHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _reverse_geocode(self, payload: dict) -> dict:
+        coordinates_payload = payload.get("coordinates") or {}
+        try:
+            coordinates = Coordinates(
+                lat=float(coordinates_payload["lat"]),
+                lng=float(coordinates_payload["lng"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            return {
+                "success": False,
+                "data": None,
+                "error": {
+                    "code": "INVALID_COORDINATES",
+                    "message": "缺少可用于地址反查的经纬度。",
+                    "recoverable": True,
+                },
+            }
+
+        address = LOCATION_PROVIDER.reverse_geocode(coordinates)
+        return {"success": True, "data": address.to_dict(), "error": None}
+
     def _json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
@@ -81,4 +108,3 @@ def run(host: str = "127.0.0.1", port: int = 8000) -> None:
 
 if __name__ == "__main__":
     run()
-
