@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+from app.agent.candidate_selector import LongCatCandidateSelector
 from app.agent.context_builder import ContextBuilder, PlanningContext
 from app.agent.executor import ExecutionManager
 from app.agent.intent_parser import IntentParser
@@ -10,6 +11,7 @@ from app.agent.longcat_response_generator import LongCatResponseGenerator
 from app.agent.participant_constraints import ParticipantConstraintBuilder
 from app.agent.planner import PlanningEngine
 from app.agent.response_generator import ResponseGenerator
+from app.agent.strategy import LongCatStrategyBuilder, PersonaStrategyBuilder
 from app.domain.enums import RunMode
 from app.domain.models import ExecutionResult, Plan
 from app.providers.base import LocalLifeProvider, ProviderAPIError
@@ -48,6 +50,8 @@ class LocalPlannerAgent:
         fallback_response_generator = ResponseGenerator()
         self.parser = LongCatIntentParser(fallback_parser, self.llm_client)
         self.constraint_builder = ParticipantConstraintBuilder()
+        self.strategy_builder = LongCatStrategyBuilder(PersonaStrategyBuilder(), self.llm_client)
+        self.candidate_selector = LongCatCandidateSelector(self.llm_client)
         self.context_builder = ContextBuilder()
         self.planner = PlanningEngine(self.provider)
         self.executor = ExecutionManager(self.provider)
@@ -66,20 +70,27 @@ class LocalPlannerAgent:
             return self._longcat_error(exc)
 
         intent = self.constraint_builder.normalize(intent)
+        try:
+            strategy = self.strategy_builder.build(intent)
+        except LongCatAPIError as exc:
+            return self._longcat_error(exc)
+
         user_context_payload = self._prepare_user_context(payload.get("user_context"), mode)
         if isinstance(user_context_payload, dict) and "error" in user_context_payload:
             return user_context_payload["error"]
 
-        context = self.context_builder.build(intent, user_context_payload)
+        context = self.context_builder.build(intent, user_context_payload, strategy)
         if isinstance(context, dict):
             return self._error(context["code"], context["message"], context["recoverable"])
 
         provider = self._provider_for_mode(mode)
-        planner = PlanningEngine(provider)
+        planner = PlanningEngine(provider, self.candidate_selector)
         try:
             plan = planner.generate_plan(context)
         except ProviderAPIError as exc:
             return self._provider_error(exc)
+        except LongCatAPIError as exc:
+            return self._longcat_error(exc)
 
         try:
             plan.final_message = self.response_generator.summarize_plan(plan)

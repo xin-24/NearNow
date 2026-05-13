@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from app.auth import AuthError, AuthService
+from app.agent.candidate_selector import LongCatCandidateSelector
 from app.agent.context_builder import ContextBuilder
 from app.agent.intent_parser import IntentParser
 from app.agent.longcat_intent_parser import LongCatIntentParser
@@ -13,6 +14,7 @@ from app.agent.orchestrator import LocalPlannerAgent
 from app.agent.participant_constraints import ParticipantConstraintBuilder
 from app.agent.planner import PlanningEngine
 from app.agent.response_generator import ResponseGenerator
+from app.agent.strategy import LongCatStrategyBuilder, PersonaStrategyBuilder
 from app.domain.models import Activity, Constraint, Coordinates, ParticipantProfile, PlanningIntent, Restaurant, RouteOption, to_plain
 from app.providers.longcat_client import LongCatAPIError, LongCatClient, LongCatConfig, load_env_file
 from app.providers.location_provider import ApproximateAddress, MockLocationProvider, OpenStreetMapLocationProvider
@@ -194,6 +196,469 @@ class RealLocalLifeProviderTest(unittest.TestCase):
         self.assertEqual(3.2, route.distance_km)
         self.assertEqual("driving", route.mode)
 
+    def test_osm_tags_are_inferred_from_place_type_not_blind_persona(self) -> None:
+        provider = OpenStreetMapLocalLifeProvider(max_results=5)
+        origin = Coordinates(39.9957, 116.4813)
+
+        activities = provider.from_overpass_activities_payload(
+            {
+                "elements": [
+                    {
+                        "type": "node",
+                        "id": 1,
+                        "lat": 39.991,
+                        "lon": 116.476,
+                        "tags": {"name": "小巷咖啡", "amenity": "cafe"},
+                    },
+                    {
+                        "type": "node",
+                        "id": 2,
+                        "lat": 39.992,
+                        "lon": 116.477,
+                        "tags": {"name": "城市影院", "amenity": "cinema"},
+                    },
+                ]
+            },
+            ["bestie"],
+            2,
+            origin,
+        )
+        by_name = {item.name: item for item in activities}
+        self.assertIn("bestie", by_name["小巷咖啡"].tags)
+        self.assertNotIn("bestie", by_name["城市影院"].tags)
+
+        restaurants = provider.from_overpass_restaurants_payload(
+            {
+                "elements": [
+                    {
+                        "type": "node",
+                        "id": 3,
+                        "lat": 39.993,
+                        "lon": 116.478,
+                        "tags": {"name": "普通餐厅", "amenity": "restaurant"},
+                    }
+                ]
+            },
+            ["bestie"],
+            2,
+            origin,
+        )
+        self.assertNotIn("bestie", restaurants[0].tags)
+
+    def test_outdoor_seating_marks_restaurant_as_pet_possible(self) -> None:
+        provider = OpenStreetMapLocalLifeProvider(max_results=5)
+        restaurants = provider.from_overpass_restaurants_payload(
+            {
+                "elements": [
+                    {
+                        "type": "node",
+                        "id": 1,
+                        "lat": 39.993,
+                        "lon": 116.478,
+                        "tags": {
+                            "name": "露台咖啡",
+                            "amenity": "cafe",
+                            "outdoor_seating": "yes",
+                        },
+                    }
+                ]
+            },
+            ["pet", "pet_friendly"],
+            2,
+            Coordinates(39.9957, 116.4813),
+        )
+
+        self.assertIn("pet_possible", restaurants[0].tags)
+        self.assertNotIn("pet_friendly", restaurants[0].tags)
+
+    def test_elder_stroll_tags_prefer_park_and_mall_over_library(self) -> None:
+        provider = OpenStreetMapLocalLifeProvider(max_results=5)
+        origin = Coordinates(39.9957, 116.4813)
+        activities = provider.from_overpass_activities_payload(
+            {
+                "elements": [
+                    {
+                        "type": "node",
+                        "id": 1,
+                        "lat": 39.991,
+                        "lon": 116.476,
+                        "tags": {"name": "社区图书馆", "amenity": "library"},
+                    },
+                    {
+                        "type": "node",
+                        "id": 2,
+                        "lat": 39.992,
+                        "lon": 116.477,
+                        "tags": {"name": "街心花园", "leisure": "garden"},
+                    },
+                    {
+                        "type": "node",
+                        "id": 3,
+                        "lat": 39.993,
+                        "lon": 116.478,
+                        "tags": {"name": "生活广场", "shop": "mall"},
+                    },
+                ]
+            },
+            ["elder", "stroll", "low_walking"],
+            3,
+            origin,
+        )
+        by_name = {item.name: item for item in activities}
+        self.assertIn("stroll_friendly", by_name["街心花园"].tags)
+        self.assertIn("stroll_friendly", by_name["生活广场"].tags)
+        self.assertNotIn("stroll_friendly", by_name["社区图书馆"].tags)
+        self.assertNotIn("bestie", by_name["社区图书馆"].tags)
+
+    def test_cafe_is_not_treated_as_elder_dinner_by_default(self) -> None:
+        provider = OpenStreetMapLocalLifeProvider(max_results=5)
+        restaurants = provider.from_overpass_restaurants_payload(
+            {
+                "elements": [
+                    {
+                        "type": "node",
+                        "id": 1,
+                        "lat": 39.993,
+                        "lon": 116.478,
+                        "tags": {"name": "瑞幸咖啡", "amenity": "cafe"},
+                    },
+                    {
+                        "type": "node",
+                        "id": 2,
+                        "lat": 39.994,
+                        "lon": 116.479,
+                        "tags": {"name": "清和小馆", "amenity": "restaurant", "cuisine": "chinese"},
+                    },
+                ]
+            },
+            ["elder", "proper_meal", "light_food"],
+            3,
+            Coordinates(39.9957, 116.4813),
+        )
+        by_name = {item.name: item for item in restaurants}
+        self.assertIn("beverage_only", by_name["瑞幸咖啡"].tags)
+        self.assertNotIn("proper_meal", by_name["瑞幸咖啡"].tags)
+        self.assertIn("proper_meal", by_name["清和小馆"].tags)
+
+    def test_heavy_food_is_marked_for_elder_light_meal_ranking(self) -> None:
+        provider = OpenStreetMapLocalLifeProvider(max_results=5)
+        restaurants = provider.from_overpass_restaurants_payload(
+            {
+                "elements": [
+                    {
+                        "type": "node",
+                        "id": 1,
+                        "lat": 39.993,
+                        "lon": 116.478,
+                        "tags": {"name": "呷哺呷哺", "amenity": "restaurant"},
+                    }
+                ]
+            },
+            ["elder", "proper_meal", "light_food"],
+            3,
+            Coordinates(39.9957, 116.4813),
+        )
+
+        self.assertIn("heavy_food", restaurants[0].tags)
+
+
+class PlanningRankingTest(unittest.TestCase):
+    def test_bestie_profile_prefers_chat_and_photo_place(self) -> None:
+        intent = PlanningIntent(
+            message="和闺蜜下午拍照喝咖啡",
+            participants=[ParticipantProfile(relation="self"), ParticipantProfile(relation="bestie")],
+            preferences=["photo_friendly"],
+            scenario_tags=["bestie", "photo_friendly"],
+        )
+        context = ContextBuilder().build(ParticipantConstraintBuilder().normalize(intent), USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+        activities = [
+            Activity(
+                activity_id="date_1",
+                name="城市影院",
+                category="amenity:cinema",
+                location="商场",
+                coordinates=Coordinates(39.99, 116.48),
+                distance_km=1.0,
+                duration_minutes=90,
+                capacity_left=10,
+                tags=["date", "quiet", "indoor"],
+            ),
+            Activity(
+                activity_id="bestie_1",
+                name="花艺下午茶",
+                category="amenity:cafe",
+                location="商场",
+                coordinates=Coordinates(39.991, 116.481),
+                distance_km=2.0,
+                duration_minutes=75,
+                capacity_left=10,
+                tags=["bestie", "afternoon_tea", "chat_friendly", "photo_friendly"],
+            ),
+        ]
+
+        ranked = PlanningEngine(MockLocalLifeProvider())._rank_activity_candidates(activities, context)
+
+        self.assertEqual("花艺下午茶", ranked[0].name)
+
+    def test_partner_profile_prefers_date_place(self) -> None:
+        intent = PlanningIntent(
+            message="和恋人约会，想有仪式感",
+            participants=[ParticipantProfile(relation="self"), ParticipantProfile(relation="partner")],
+            preferences=["date"],
+            scenario_tags=["partner", "date"],
+        )
+        context = ContextBuilder().build(ParticipantConstraintBuilder().normalize(intent), USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+        activities = [
+            Activity(
+                activity_id="group_1",
+                name="桌游空间",
+                category="amenity:community_centre",
+                location="商场",
+                coordinates=Coordinates(39.99, 116.48),
+                distance_km=1.0,
+                duration_minutes=90,
+                capacity_left=10,
+                tags=["group_friendly", "team_building", "indoor"],
+            ),
+            Activity(
+                activity_id="date_1",
+                name="河畔艺术展",
+                category="tourism:gallery",
+                location="艺术中心",
+                coordinates=Coordinates(39.991, 116.481),
+                distance_km=2.0,
+                duration_minutes=75,
+                capacity_left=10,
+                tags=["date", "quiet", "photo_friendly", "indoor"],
+            ),
+        ]
+
+        ranked = PlanningEngine(MockLocalLifeProvider())._rank_activity_candidates(activities, context)
+
+        self.assertEqual("河畔艺术展", ranked[0].name)
+
+    def test_elder_stroll_profile_prefers_park_or_mall_over_library(self) -> None:
+        intent = IntentParser().parse("陪爸妈附近走走，别太累，晚饭清淡一点。")
+        context = ContextBuilder().build(ParticipantConstraintBuilder().normalize(intent), USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+        activities = [
+            Activity(
+                activity_id="library_1",
+                name="社区图书馆",
+                category="amenity:library",
+                location="社区",
+                coordinates=Coordinates(39.99, 116.48),
+                distance_km=0.3,
+                duration_minutes=60,
+                capacity_left=20,
+                tags=["indoor", "quiet", "elder_friendly"],
+            ),
+            Activity(
+                activity_id="park_1",
+                name="街心花园",
+                category="leisure:garden",
+                location="社区",
+                coordinates=Coordinates(39.991, 116.481),
+                distance_km=1.2,
+                duration_minutes=60,
+                capacity_left=20,
+                tags=["outdoor", "low_walking", "elder_friendly", "stroll_friendly"],
+            ),
+            Activity(
+                activity_id="mall_1",
+                name="生活广场",
+                category="shop:mall",
+                location="商场",
+                coordinates=Coordinates(39.992, 116.482),
+                distance_km=1.4,
+                duration_minutes=75,
+                capacity_left=20,
+                tags=["indoor", "low_walking", "elder_friendly", "stroll_friendly"],
+            ),
+        ]
+
+        ranked = PlanningEngine(MockLocalLifeProvider())._rank_activity_candidates(activities, context)
+
+        self.assertIn(ranked[0].name, {"街心花园", "生活广场"})
+
+    def test_elder_dinner_profile_prefers_light_meal_over_coffee(self) -> None:
+        intent = IntentParser().parse("陪爸妈附近走走，别太累，晚饭清淡一点。")
+        context = ContextBuilder().build(ParticipantConstraintBuilder().normalize(intent), USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+        restaurants = [
+            Restaurant(
+                restaurant_id="coffee_1",
+                name="瑞幸咖啡",
+                location="楼下",
+                coordinates=Coordinates(39.99, 116.48),
+                distance_km=0.2,
+                available=True,
+                table_size=4,
+                wait_minutes=0,
+                tags=["elder_friendly", "quiet", "beverage_only", "beverage_light"],
+            ),
+            Restaurant(
+                restaurant_id="bbq_1",
+                name="烧烤小馆",
+                location="楼下",
+                coordinates=Coordinates(39.9905, 116.4805),
+                distance_km=0.3,
+                available=True,
+                table_size=4,
+                wait_minutes=0,
+                tags=["elder_friendly", "proper_meal", "heavy_food", "group_table"],
+            ),
+            Restaurant(
+                restaurant_id="meal_1",
+                name="清和小馆",
+                location="商场",
+                coordinates=Coordinates(39.991, 116.481),
+                distance_km=1.0,
+                available=True,
+                table_size=4,
+                wait_minutes=0,
+                tags=["elder_friendly", "light_food", "proper_meal", "group_table"],
+            ),
+        ]
+
+        ranked = PlanningEngine(MockLocalLifeProvider())._rank_restaurant_candidates(restaurants, context)
+
+        self.assertEqual("清和小馆", ranked[0].name)
+
+
+class PlanningStrategyTest(unittest.TestCase):
+    def test_persona_strategy_adds_elder_stroll_rules(self) -> None:
+        intent = ParticipantConstraintBuilder().normalize(
+            IntentParser().parse("陪爸妈附近走走，别太累，晚饭清淡一点。")
+        )
+
+        strategy = PersonaStrategyBuilder().build(intent)
+
+        self.assertEqual("elder_stroll_light_meal", strategy.name)
+        self.assertIn("stroll_friendly", strategy.preferred_activity_tags)
+        self.assertIn("proper_meal", strategy.preferred_restaurant_tags)
+        self.assertIn("amenity:library", strategy.avoid_activity_categories)
+        self.assertIn("beverage_only", strategy.avoid_restaurant_tags)
+
+    def test_longcat_strategy_builder_merges_ai_strategy_with_baseline(self) -> None:
+        intent = ParticipantConstraintBuilder().normalize(
+            IntentParser().parse("陪爸妈附近走走，别太累，晚饭清淡一点。")
+        )
+        client = StubLongCatClient(
+            content=json.dumps(
+                {
+                    "name": "ai_elder_stroll",
+                    "summary": "AI 认为应优先公园慢走和清淡正餐",
+                    "preferred_activity_tags": ["stroll_friendly", "park"],
+                    "preferred_restaurant_tags": ["proper_meal", "light_food"],
+                    "avoid_restaurant_tags": ["beverage_only", "heavy_food"],
+                    "reasoning": ["爸妈场景重在可休息和少走路"],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        strategy = LongCatStrategyBuilder(PersonaStrategyBuilder(), client).build(intent)
+
+        self.assertEqual("ai_elder_stroll", strategy.name)
+        self.assertIn("stroll_friendly", strategy.preferred_activity_tags)
+        self.assertIn("proper_meal", strategy.preferred_restaurant_tags)
+        self.assertIn("amenity:library", strategy.avoid_activity_categories)
+        self.assertIn("heavy_food", strategy.avoid_restaurant_tags)
+
+    def test_pet_plan_allows_pet_possible_restaurant_with_warning(self) -> None:
+        intent = IntentParser().parse("下午带狗出去玩，顺便找个能带宠物的地方吃饭。")
+        context = ContextBuilder().build(ParticipantConstraintBuilder().normalize(intent), USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+
+        plan = PlanningEngine(PetPossibleProvider()).generate_plan(context)
+
+        self.assertNotEqual("需要补充或放宽条件", plan.title)
+        self.assertIn("宠物公园", plan.title)
+        self.assertTrue(any("必须电话确认" in note for note in plan.risk_notes))
+
+
+class CandidateSelectorTest(unittest.TestCase):
+    def test_longcat_candidate_selector_chooses_real_candidate_option(self) -> None:
+        intent = ParticipantConstraintBuilder().normalize(IntentParser().parse("陪爸妈附近走走，别太累，晚饭清淡一点。"))
+        context = ContextBuilder().build(intent, USER_CONTEXT, PersonaStrategyBuilder().build(intent))
+        self.assertNotIsInstance(context, dict)
+
+        candidates = [
+            (
+                91.0,
+                Activity(
+                    activity_id="activity_library",
+                    name="社区图书馆",
+                    category="amenity:library",
+                    location="社区",
+                    coordinates=Coordinates(39.99, 116.48),
+                    distance_km=0.2,
+                    duration_minutes=60,
+                    capacity_left=20,
+                    tags=["quiet", "elder_friendly"],
+                ),
+                Restaurant(
+                    restaurant_id="restaurant_coffee",
+                    name="瑞幸咖啡",
+                    location="楼下",
+                    coordinates=Coordinates(39.9901, 116.4801),
+                    distance_km=0.2,
+                    available=True,
+                    table_size=4,
+                    wait_minutes=0,
+                    tags=["beverage_only", "quiet"],
+                ),
+                RouteOption("家", "社区图书馆", "walking", 4, 0.3, 0, 0.68, 0.62),
+                [RouteOption("家", "社区图书馆", "walking", 4, 0.3, 0, 0.68, 0.62)],
+            ),
+            (
+                88.0,
+                Activity(
+                    activity_id="activity_garden",
+                    name="街心花园",
+                    category="leisure:garden",
+                    location="社区",
+                    coordinates=Coordinates(39.991, 116.481),
+                    distance_km=1.0,
+                    duration_minutes=60,
+                    capacity_left=20,
+                    tags=["stroll_friendly", "low_walking", "elder_friendly"],
+                ),
+                Restaurant(
+                    restaurant_id="restaurant_light",
+                    name="清禾小馆",
+                    location="公园旁",
+                    coordinates=Coordinates(39.9911, 116.4811),
+                    distance_km=1.1,
+                    available=True,
+                    table_size=4,
+                    wait_minutes=0,
+                    tags=["proper_meal", "light_food", "elder_friendly"],
+                ),
+                RouteOption("家", "街心花园", "ride_hailing", 8, 1.2, 14, 0.9, 0.88),
+                [RouteOption("家", "街心花园", "ride_hailing", 8, 1.2, 14, 0.9, 0.88)],
+            ),
+        ]
+        client = StubLongCatClient(
+            content=json.dumps(
+                {
+                    "option_id": "option_2",
+                    "route_mode": "ride_hailing",
+                    "reasoning": ["爸妈场景更适合低强度花园慢走和清淡正餐"],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        decision = LongCatCandidateSelector(client).decide(context, candidates)
+
+        self.assertEqual("option_2", decision.option_id)
+        self.assertEqual("ride_hailing", decision.route_mode)
+        self.assertIn("低强度", decision.reasoning[0])
+
 
 class LongCatIntegrationTest(unittest.TestCase):
     def test_load_env_file_sets_longcat_key_without_overriding_existing_env(self) -> None:
@@ -273,10 +738,46 @@ class LongCatIntegrationTest(unittest.TestCase):
         self.assertIn("bestie", {participant.relation for participant in intent.participants})
         self.assertIn("photo_friendly", intent.preferences)
 
+    def test_longcat_intent_parser_preserves_rule_based_elder_signals(self) -> None:
+        client = StubLongCatClient(
+            content="""
+            {
+              "start_time": "16:00",
+              "end_time": "20:00",
+              "radius_km": 4,
+              "preferences": ["nearby", "low_walking"],
+              "scenario_tags": ["elder"],
+              "participants": [{"relation": "elder", "count": 2}]
+            }
+            """
+        )
+        intent = LongCatIntentParser(IntentParser(), client).parse("陪爸妈附近走走，别太累，晚饭清淡一点。")
+        self.assertIn("stroll", intent.preferences)
+        self.assertIn("proper_meal", intent.preferences)
+        self.assertIn("light_food", intent.preferences)
+        self.assertIn("elder", intent.scenario_tags)
+
     def test_longcat_response_generator_uses_model_content(self) -> None:
         client = SequencedLongCatClient(
             [
                 json.dumps(to_intent_payload(IntentParser().parse("下午和恋人约会，想有点仪式感。")), ensure_ascii=False),
+                json.dumps(
+                    {
+                        "name": "date_atmosphere_plan",
+                        "summary": "约会优先氛围和低打扰",
+                        "preferred_activity_tags": ["date", "quiet"],
+                        "preferred_restaurant_tags": ["date", "proper_meal"],
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "option_id": "option_1",
+                        "route_mode": "ride_hailing",
+                        "reasoning": ["在真实候选中优先选择约会氛围和低打扰组合"],
+                    },
+                    ensure_ascii=False,
+                ),
                 "15:00 出发，先活动再吃饭，确认后我来预约。",
             ]
         )
@@ -380,6 +881,20 @@ class RuleBackedLongCatClient:
             request = json.loads(messages[-1]["content"])
             intent = IntentParser().parse(request["message"])
             return json.dumps(to_intent_payload(intent), ensure_ascii=False)
+        if "策略规划器" in messages[0]["content"]:
+            request = json.loads(messages[-1]["content"])
+            return json.dumps(request.get("fallback_strategy", {}), ensure_ascii=False)
+        if "候选决策器" in messages[0]["content"]:
+            request = json.loads(messages[-1]["content"])
+            option = request["candidate_options"][0]
+            return json.dumps(
+                {
+                    "option_id": option["option_id"],
+                    "route_mode": option["default_route_mode"],
+                    "reasoning": ["从真实候选中选择规则得分最高且符合画像的一组"],
+                },
+                ensure_ascii=False,
+            )
         request = json.loads(messages[-1]["content"])
         return request.get("fallback_summary", "方案已生成。")
 
@@ -494,6 +1009,88 @@ class SparseRealTagProvider:
         return {"status": "ready"}
 
 
+class PetPossibleProvider:
+    provider_name = "osm_overpass"
+
+    def search_activities(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Activity]:
+        return [
+            Activity(
+                activity_id="activity_pet_001",
+                name="宠物公园",
+                category="leisure:park",
+                location="附近公园",
+                coordinates=Coordinates(39.99, 116.48),
+                distance_km=1.1,
+                duration_minutes=75,
+                capacity_left=30,
+                tags=["pet_friendly", "outdoor", "low_walking"],
+                reservation_required=False,
+                provider=self.provider_name,
+            )
+        ]
+
+    def search_restaurants(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Restaurant]:
+        return [
+            Restaurant(
+                restaurant_id="restaurant_pet_possible_001",
+                name="露台咖啡",
+                location="公园旁",
+                coordinates=Coordinates(39.991, 116.481),
+                distance_km=1.2,
+                available=True,
+                table_size=4,
+                wait_minutes=0,
+                tags=["pet_possible", "outdoor", "group_table", "afternoon_tea"],
+                reservation_required=False,
+                average_price=80,
+                provider=self.provider_name,
+            )
+        ]
+
+    def calculate_routes(
+        self,
+        origin_name: str,
+        origin: Coordinates,
+        destination_name: str,
+        destination: Coordinates,
+        modes: list[str],
+    ) -> list[RouteOption]:
+        return [
+            RouteOption(
+                from_name=origin_name,
+                to_name=destination_name,
+                mode="walking",
+                duration_minutes=12,
+                distance_km=1.1,
+                estimated_cost=0,
+                comfort_score=0.72,
+                kid_friendly_score=0.6,
+                walking_minutes=12,
+            )
+        ]
+
+    def book_activity(self, activity_id: str, payload: dict) -> dict:
+        return {"status": "ready"}
+
+    def reserve_restaurant(self, restaurant_id: str, payload: dict) -> dict:
+        return {"status": "ready"}
+
+    def send_notification(self, payload: dict) -> dict:
+        return {"status": "ready"}
+
+
 def to_intent_payload(intent: PlanningIntent) -> dict:
     return {
         "start_time": intent.start_time,
@@ -522,6 +1119,13 @@ class IntentParserTest(unittest.TestCase):
         self.assertIn("bestie", relations)
         self.assertIn("photo_friendly", intent.scenario_tags)
 
+    def test_parses_elder_stroll_and_dinner_intent(self) -> None:
+        intent = IntentParser().parse("陪爸妈附近走走，别太累，晚饭清淡一点。")
+        self.assertIn("elder", {participant.relation for participant in intent.participants})
+        self.assertIn("stroll", intent.preferences)
+        self.assertIn("proper_meal", intent.preferences)
+        self.assertIn("light_food", [constraint.value for participant in intent.participants for constraint in participant.constraints])
+
 
 class LocalPlannerAgentTest(unittest.TestCase):
     def test_child_constraints_are_preferences_when_real_tags_are_sparse(self) -> None:
@@ -533,7 +1137,7 @@ class LocalPlannerAgentTest(unittest.TestCase):
         plan = PlanningEngine(SparseRealTagProvider()).generate_plan(context)
 
         self.assertNotEqual("需要补充或放宽条件", plan.title)
-        self.assertEqual(4, len(plan.schedule))
+        self.assertEqual(5, len(plan.schedule))
         self.assertTrue(any("儿童需求已作为强偏好" in note for note in plan.risk_notes))
 
     def test_pet_plan_uses_pet_friendly_places(self) -> None:

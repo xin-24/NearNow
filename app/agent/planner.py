@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.agent.candidate_selector import CandidateDecision, CandidateTuple, LongCatCandidateSelector
 from app.agent.context_builder import PlanningContext
 from app.domain.models import (
     Activity,
@@ -10,6 +11,7 @@ from app.domain.models import (
     ScheduleItem,
 )
 from app.providers.base import LocalLifeProvider
+from app.providers.longcat_client import LongCatAPIError
 from app.utils.ids import next_action_id, next_plan_id
 from app.utils.time_utils import add_minutes
 
@@ -19,19 +21,25 @@ MAX_RESTAURANT_CANDIDATES = 12
 
 
 class PlanningEngine:
-    def __init__(self, provider: LocalLifeProvider) -> None:
+    def __init__(
+        self,
+        provider: LocalLifeProvider,
+        candidate_selector: LongCatCandidateSelector | None = None,
+    ) -> None:
         self.provider = provider
+        self.candidate_selector = candidate_selector
 
     def generate_plan(self, context: PlanningContext) -> Plan:
         intent = context.intent
+        search_tags = self._search_tags(context)
         activities = self.provider.search_activities(
-            intent.scenario_tags,
+            search_tags,
             intent.party_size,
             intent.radius_km,
             context.origin_coordinates,
         )
         restaurants = self.provider.search_restaurants(
-            intent.scenario_tags,
+            search_tags,
             intent.party_size,
             intent.radius_km,
             context.origin_coordinates,
@@ -39,7 +47,7 @@ class PlanningEngine:
         activities = self._rank_activity_candidates(activities, context)[:MAX_ROUTE_ACTIVITY_CANDIDATES]
         restaurants = self._rank_restaurant_candidates(restaurants, context)[:MAX_RESTAURANT_CANDIDATES]
 
-        candidates = []
+        candidates: list[CandidateTuple] = []
         modes = self._allowed_transport_modes(intent.scenario_tags)
         for activity in activities:
             if not self._satisfies_activity_hard_constraints(activity, context):
@@ -61,6 +69,7 @@ class PlanningEngine:
                     self._activity_score(activity, context)
                     + self._restaurant_score(restaurant, context)
                     + self._route_score(selected_route, context)
+                    + self._pair_score(activity, restaurant, context)
                 )
                 candidates.append((score, activity, restaurant, selected_route, routes))
 
@@ -68,10 +77,30 @@ class PlanningEngine:
             return self._fallback_plan(context, activities, restaurants)
 
         candidates.sort(key=lambda item: item[0], reverse=True)
-        _, activity, restaurant, selected_route, routes = candidates[0]
+        selected_candidate = candidates[0]
+        selection_reasoning: list[str] = []
+        if self.candidate_selector is not None:
+            decision = self.candidate_selector.decide(context, candidates[:8])
+            selected_candidate = self._candidate_from_decision(decision, candidates[:8])
+            selection_reasoning = decision.reasoning
+
+        _, activity, restaurant, selected_route, routes = selected_candidate
         for route in routes:
             route.selected = route is selected_route
-        return self._build_plan(context, activity, restaurant, selected_route, routes, candidates[1:3])
+        alternatives = [
+            item
+            for item in candidates
+            if not self._same_candidate_places(item, selected_candidate)
+        ][:3]
+        return self._build_plan(
+            context,
+            activity,
+            restaurant,
+            selected_route,
+            routes,
+            alternatives,
+            selection_reasoning,
+        )
 
     def _build_plan(
         self,
@@ -81,13 +110,24 @@ class PlanningEngine:
         selected_route: RouteOption,
         routes: list[RouteOption],
         alternatives: list[tuple],
+        selection_reasoning: list[str] | None = None,
     ) -> Plan:
         intent = context.intent
         start = intent.start_time
         arrive = add_minutes(start, selected_route.duration_minutes)
         activity_end = add_minutes(arrive, min(activity.duration_minutes, 90))
         extension_end = add_minutes(activity_end, 45)
-        dinner_start = add_minutes(extension_end, 15)
+        restaurant_route = self._select_route(
+            self.provider.calculate_routes(
+                activity.name,
+                activity.coordinates,
+                restaurant.name,
+                restaurant.coordinates,
+                self._allowed_transport_modes(intent.scenario_tags),
+            ),
+            context,
+        )
+        dinner_start = add_minutes(extension_end, restaurant_route.duration_minutes)
         dinner_end = add_minutes(dinner_start, 50)
 
         extension = self._extension_for(context, activity)
@@ -127,14 +167,22 @@ class PlanningEngine:
                 provider_place_id=activity.provider_place_id,
             ),
             ScheduleItem(
+                start_time=extension_end,
+                end_time=dinner_start,
+                type="travel",
+                name=f"前往{restaurant.name}",
+                location=f"{activity.name} → {restaurant.name}",
+                reason=self._meal_transport_reason(restaurant_route, context),
+                travel_minutes=restaurant_route.duration_minutes,
+                transport_mode=restaurant_route.mode,
+            ),
+            ScheduleItem(
                 start_time=dinner_start,
                 end_time=dinner_end,
                 type="restaurant",
                 name=restaurant.name,
                 location=restaurant.location,
                 reason=self._restaurant_reason(restaurant, context),
-                travel_minutes=5,
-                transport_mode="walking",
                 coordinates=restaurant.coordinates,
                 provider=restaurant.provider,
                 provider_place_id=restaurant.provider_place_id,
@@ -191,6 +239,8 @@ class PlanningEngine:
             pending_actions=pending_actions,
             alternatives=self._alternatives(alternatives),
             risk_notes=self._risk_notes(context, selected_route, restaurant),
+            strategy=context.strategy,
+            selection_reasoning=selection_reasoning or [],
         )
 
     def _fallback_plan(
@@ -219,7 +269,29 @@ class PlanningEngine:
             risk_notes=notes,
             requires_confirmation=False,
             final_message="我没找到同时满足所有硬约束的方案。可以放宽距离、减少参与人数，或允许我换一个活动类型继续规划。",
+            strategy=context.strategy,
         )
+
+    def _candidate_from_decision(
+        self,
+        decision: CandidateDecision,
+        candidates: list[CandidateTuple],
+    ) -> CandidateTuple:
+        try:
+            index = int(decision.option_id.removeprefix("option_")) - 1
+        except ValueError as exc:
+            raise LongCatAPIError("LongCat candidate option_id was invalid") from exc
+        if index < 0 or index >= len(candidates):
+            raise LongCatAPIError("LongCat candidate option_id was outside candidate list")
+
+        score, activity, restaurant, _, routes = candidates[index]
+        selected_route = next((route for route in routes if route.mode == decision.route_mode), None)
+        if selected_route is None:
+            raise LongCatAPIError("LongCat candidate route_mode was outside route list")
+        return score, activity, restaurant, selected_route, routes
+
+    def _same_candidate_places(self, left: CandidateTuple, right: CandidateTuple) -> bool:
+        return left[1].activity_id == right[1].activity_id and left[2].restaurant_id == right[2].restaurant_id
 
     def _satisfies_activity_hard_constraints(self, activity: Activity, context: PlanningContext) -> bool:
         tags = set(activity.tags)
@@ -231,7 +303,7 @@ class PlanningEngine:
     def _satisfies_restaurant_hard_constraints(self, restaurant: Restaurant, context: PlanningContext) -> bool:
         tags = set(restaurant.tags)
         relations = {participant.relation for participant in context.intent.participants}
-        if "pet" in relations and "pet_friendly" not in tags:
+        if "pet" in relations and not {"pet_friendly", "pet_possible"} & tags:
             return False
         if restaurant.wait_minutes > 40:
             return False
@@ -239,18 +311,40 @@ class PlanningEngine:
 
     def _activity_score(self, activity: Activity, context: PlanningContext) -> float:
         tags = set(activity.tags)
-        target = set(context.intent.scenario_tags)
+        target = self._activity_targets(context)
         relations = {participant.relation for participant in context.intent.participants}
-        score = len(tags & target) * 10 + max(0, 10 - activity.distance_km)
+        matched_targets = tags & target
+        score = len(matched_targets) * 12 + max(0, 10 - activity.distance_km)
         if "child" in relations:
-            score += 14 if {"kid_friendly", "child_safe"} & tags else -8
+            score += 18 if {"kid_friendly", "child_safe"} & tags else -6
         if "elder" in relations:
-            score += 12 if {"low_walking", "elder_friendly", "quiet"} & tags else -6
+            score += 16 if {"low_walking", "elder_friendly", "quiet"} & tags else -5
+            if "stroll" in context.intent.scenario_tags:
+                if {"stroll_friendly", "low_walking", "outdoor"} & tags:
+                    score += 18
+                else:
+                    score -= 12
+                if activity.category in {"amenity:library", "tourism:museum", "tourism:gallery", "amenity:cafe"}:
+                    score -= 18
+        if "partner" in relations:
+            score += 16 if {"date", "quiet", "photo_friendly"} & tags else -4
+        if "bestie" in relations:
+            score += 16 if {"bestie", "afternoon_tea", "chat_friendly", "photo_friendly"} & tags else -4
+        if "friend_group" in relations:
+            score += 10 if {"group_friendly", "team_building"} & tags else -2
+        if "colleague" in relations:
+            score += 14 if {"team_building", "group_friendly", "transit_accessible"} & tags else -4
+        if "pet" in relations:
+            score += 18 if {"pet_friendly", "outdoor"} & tags else -20
+        if context.strategy:
+            if activity.category in set(context.strategy.avoid_activity_categories):
+                score -= 30
+            score += len(tags & set(context.strategy.preferred_activity_tags)) * 10
         return score
 
     def _restaurant_score(self, restaurant: Restaurant, context: PlanningContext) -> float:
         tags = set(restaurant.tags)
-        target = set(context.intent.scenario_tags + context.intent.preferences)
+        target = self._restaurant_targets(context)
         wait_score = max(0, 10 - restaurant.wait_minutes / 3)
         price_score = 8 if "budget_control" not in target or restaurant.average_price <= 150 else 2
         relations = {participant.relation for participant in context.intent.participants}
@@ -259,13 +353,97 @@ class PlanningEngine:
             score += 8 if {"kid_friendly", "group_table"} & tags else -3
         if "elder" in relations:
             score += 8 if {"elder_friendly", "low_walking", "quiet", "light_food"} & tags else -3
+            if "proper_meal" in context.intent.preferences:
+                if {"proper_meal", "light_food"} & tags:
+                    score += 16
+                if "light_food" in tags:
+                    score += 14
+                if "heavy_food" in tags:
+                    score -= 28
+                if "beverage_only" in tags:
+                    score -= 22
+                if "quick_meal" in tags:
+                    score -= 10
+        if "partner" in relations:
+            score += 8 if {"date", "quiet", "light_food"} & tags else -2
+        if "bestie" in relations:
+            score += 10 if {"bestie", "afternoon_tea", "chat_friendly", "quiet"} & tags else -3
+        if "pet" in relations:
+            if "pet_friendly" in tags:
+                score += 14
+            elif "pet_possible" in tags:
+                score += 6
+            else:
+                score -= 20
+        if context.strategy:
+            score += len(tags & set(context.strategy.preferred_restaurant_tags)) * 10
+            score -= len(tags & set(context.strategy.avoid_restaurant_tags)) * 18
         return score
+
+    def _search_tags(self, context: PlanningContext) -> list[str]:
+        tags = [
+            *context.intent.scenario_tags,
+            *context.intent.preferences,
+            *(context.strategy.preferred_activity_tags if context.strategy else []),
+            *(context.strategy.preferred_restaurant_tags if context.strategy else []),
+            *(context.strategy.search_keywords if context.strategy else []),
+        ]
+        result: list[str] = []
+        for tag in tags:
+            if tag and tag not in result:
+                result.append(tag)
+        return result
+
+    def _activity_targets(self, context: PlanningContext) -> set[str]:
+        targets = set(context.intent.scenario_tags + context.intent.preferences)
+        if context.strategy:
+            targets.update(context.strategy.preferred_activity_tags)
+        persona_targets = {
+            "child": {"kid_friendly", "child_safe", "indoor", "outdoor"},
+            "spouse": {"quiet", "low_walking", "light_food", "date"},
+            "partner": {"date", "quiet", "photo_friendly", "indoor"},
+            "bestie": {"bestie", "afternoon_tea", "chat_friendly", "photo_friendly"},
+            "friend_group": {"group_friendly", "team_building", "indoor"},
+            "pet": {"pet_friendly", "outdoor", "low_walking"},
+            "elder": {"low_walking", "elder_friendly", "quiet"},
+            "colleague": {"team_building", "group_friendly", "transit_accessible"},
+            "client": {"business", "quiet", "transit_accessible"},
+        }
+        for participant in context.intent.participants:
+            targets.update(persona_targets.get(participant.relation, set()))
+            for constraint in participant.constraints:
+                if constraint.value:
+                    targets.add(constraint.value)
+        return targets
+
+    def _restaurant_targets(self, context: PlanningContext) -> set[str]:
+        targets = set(context.intent.preferences)
+        if context.strategy:
+            targets.update(context.strategy.preferred_restaurant_tags)
+        persona_targets = {
+            "child": {"kid_friendly", "group_table"},
+            "spouse": {"quiet", "light_food", "low_calorie"},
+            "partner": {"date", "quiet", "light_food"},
+            "bestie": {"bestie", "afternoon_tea", "chat_friendly", "quiet"},
+            "friend_group": {"group_table", "budget_control"},
+            "pet": {"pet_friendly", "pet_possible", "outdoor"},
+            "elder": {"elder_friendly", "light_food", "quiet", "low_walking", "proper_meal"},
+            "colleague": {"group_table", "budget_control", "transit_accessible"},
+            "client": {"quiet", "business"},
+        }
+        for participant in context.intent.participants:
+            targets.update(persona_targets.get(participant.relation, set()))
+            for constraint in participant.constraints:
+                if constraint.value:
+                    targets.add(constraint.value)
+        return targets
 
     def _rank_activity_candidates(self, activities: list[Activity], context: PlanningContext) -> list[Activity]:
         return sorted(
             activities,
             key=lambda activity: (
                 not self._satisfies_activity_hard_constraints(activity, context),
+                self._strategy_activity_penalty(activity, context),
                 -self._activity_score(activity, context),
                 activity.distance_km,
             ),
@@ -276,10 +454,48 @@ class PlanningEngine:
             restaurants,
             key=lambda restaurant: (
                 not self._satisfies_restaurant_hard_constraints(restaurant, context),
+                self._strategy_restaurant_penalty(restaurant, context),
                 -self._restaurant_score(restaurant, context),
                 restaurant.distance_km,
             ),
         )
+
+    def _strategy_activity_penalty(self, activity: Activity, context: PlanningContext) -> int:
+        if not context.strategy:
+            return 0
+        tags = set(activity.tags)
+        penalty = 0
+        if activity.category in set(context.strategy.avoid_activity_categories):
+            penalty += 1
+        if not tags & set(context.strategy.preferred_activity_tags):
+            penalty += 1
+        return penalty
+
+    def _strategy_restaurant_penalty(self, restaurant: Restaurant, context: PlanningContext) -> int:
+        if not context.strategy:
+            return 0
+        tags = set(restaurant.tags)
+        penalty = 0
+        if tags & set(context.strategy.avoid_restaurant_tags):
+            penalty += 1
+        if not tags & set(context.strategy.preferred_restaurant_tags):
+            penalty += 1
+        return penalty
+
+    def _pair_score(self, activity: Activity, restaurant: Restaurant, context: PlanningContext) -> float:
+        distance = self._distance_km(activity.coordinates, restaurant.coordinates)
+        relations = {participant.relation for participant in context.intent.participants}
+        score = max(0, 8 - distance)
+        if {"elder", "pet"} & relations and distance > 2.5:
+            score -= 10
+        if "elder" in relations and distance <= 1.5:
+            score += 4
+        return score
+
+    def _distance_km(self, start: object, end: object) -> float:
+        lat_delta = abs(start.lat - end.lat) * 111
+        lng_delta = abs(start.lng - end.lng) * 85
+        return lat_delta + lng_delta
 
     def _route_score(self, route: RouteOption, context: PlanningContext) -> float:
         relations = {participant.relation for participant in context.intent.participants}
@@ -311,7 +527,7 @@ class PlanningEngine:
             "partner": "恋人：优先约会氛围和低打扰环境",
             "bestie": "闺蜜：优先拍照、下午茶和适合聊天",
             "friend_group": "朋友：优先多人参与感和可聊天空间",
-            "pet": "宠物：只选择宠物友好的活动、餐厅和交通方式",
+            "pet": "宠物：活动必须宠物友好，餐厅优先明确可携宠或户外座位并需确认",
             "elder": "老人：优先少走路、安静和座位充足",
             "colleague": "同事：优先团建容量、预算和交通公平",
             "client": "客户：优先商务氛围、隐私和交通稳定",
@@ -345,6 +561,22 @@ class PlanningEngine:
             return "距离较近，步行可以减少等待和停车成本。"
         return "该交通方式在时间和成本之间较平衡。"
 
+    def _meal_transport_reason(self, route: RouteOption, context: PlanningContext) -> str:
+        relations = {participant.relation for participant in context.intent.participants}
+        if route.mode == "walking":
+            return f"活动后步行约 {route.duration_minutes} 分钟到餐厅，节奏较轻。"
+        if route.mode == "ride_hailing":
+            if "elder" in relations:
+                return f"活动后网约车约 {route.duration_minutes} 分钟到餐厅，减少长辈步行压力。"
+            if "pet" in relations:
+                return f"活动后网约车约 {route.duration_minutes} 分钟到餐厅，减少宠物和同行者步行压力。"
+            return f"活动后网约车约 {route.duration_minutes} 分钟到餐厅，减少换乘和步行压力。"
+        if route.mode == "driving":
+            return f"活动后驾车约 {route.duration_minutes} 分钟到餐厅，适合跨商圈移动。"
+        if route.mode == "public_transit":
+            return f"活动后公共交通约 {route.duration_minutes} 分钟到餐厅，出发前需复查班次。"
+        return f"活动后用{route.mode}约 {route.duration_minutes} 分钟到餐厅。"
+
     def _activity_reason(self, activity: Activity, context: PlanningContext) -> str:
         if activity.provider == "osm_overpass":
             return f"来自真实地图 POI，匹配 {self._scenario_text(context)}；营业状态、容量和是否需要预约需出发前确认。"
@@ -352,6 +584,12 @@ class PlanningEngine:
 
     def _restaurant_reason(self, restaurant: Restaurant, context: PlanningContext) -> str:
         if restaurant.provider == "osm_overpass":
+            if (
+                "pet" in context.intent.scenario_tags
+                and "pet_possible" in restaurant.tags
+                and "pet_friendly" not in restaurant.tags
+            ):
+                return f"来自真实地图 POI，具备户外座位等携宠友好线索；宠物入内和座位规则需到店前电话确认。"
             return f"来自真实地图 POI，可作为 {context.intent.party_size} 人用餐候选；实时营业、等位和可订状态需到店前确认。"
         return f"可容纳 {context.intent.party_size} 人，等待约 {restaurant.wait_minutes} 分钟，标签匹配当前餐饮和同行者约束。"
 
@@ -382,7 +620,10 @@ class PlanningEngine:
         if "elder" in context.intent.scenario_tags and route.walking_minutes > 10:
             notes.append("老人同行时建议出发前复查步行距离，必要时改用网约车或驾车。")
         if "pet" in context.intent.scenario_tags:
-            notes.append("携宠出行需要到店前再次确认宠物入内规则。")
+            if "pet_possible" in restaurant.tags and "pet_friendly" not in restaurant.tags:
+                notes.append(f"{restaurant.name} 只有户外座位等携宠线索，并非已确认宠物友好；出发前必须电话确认。")
+            else:
+                notes.append("携宠出行需要到店前再次确认宠物入内规则。")
         return notes
 
     def _alternatives(self, alternatives: list[tuple]) -> list[dict]:

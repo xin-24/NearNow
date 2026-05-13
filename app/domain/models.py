@@ -58,6 +58,22 @@ class PlanningIntent:
 
 
 @dataclass
+class PlanningStrategy:
+    name: str
+    summary: str
+    activity_focus: list[str] = field(default_factory=list)
+    restaurant_focus: list[str] = field(default_factory=list)
+    preferred_activity_tags: list[str] = field(default_factory=list)
+    preferred_restaurant_tags: list[str] = field(default_factory=list)
+    avoid_activity_categories: list[str] = field(default_factory=list)
+    avoid_restaurant_tags: list[str] = field(default_factory=list)
+    hard_constraints: list[str] = field(default_factory=list)
+    soft_preferences: list[str] = field(default_factory=list)
+    search_keywords: list[str] = field(default_factory=list)
+    reasoning: list[str] = field(default_factory=list)
+
+
+@dataclass
 class UserContext:
     city: str = "北京"
     home_location: str | None = None
@@ -160,6 +176,8 @@ class Plan:
     risk_notes: list[str]
     requires_confirmation: bool = True
     final_message: str | None = None
+    strategy: PlanningStrategy | None = None
+    selection_reasoning: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return to_plain(self)

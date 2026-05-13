@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.domain.models import Coordinates, PlanningIntent, UserContext
+from app.domain.models import Coordinates, PlanningIntent, PlanningStrategy, UserContext
 
 
 @dataclass
@@ -11,10 +11,16 @@ class PlanningContext:
     user_context: UserContext
     origin_name: str
     origin_coordinates: Coordinates
+    strategy: PlanningStrategy | None = None
 
 
 class ContextBuilder:
-    def build(self, intent: PlanningIntent, user_context_payload: dict | None) -> PlanningContext | dict:
+    def build(
+        self,
+        intent: PlanningIntent,
+        user_context_payload: dict | None,
+        strategy: PlanningStrategy | None = None,
+    ) -> PlanningContext | dict:
         payload = user_context_payload or {}
         home_location = self._normalize_location_text(payload.get("home_location"))
         city = self._normalize_location_text(payload.get("city", "北京")) or "北京"
@@ -53,6 +59,7 @@ class ContextBuilder:
             user_context=user_context,
             origin_name=self._origin_name(user_context),
             origin_coordinates=coordinates,
+            strategy=strategy,
         )
 
     def _normalize_location_text(self, value: object | None) -> str | None:

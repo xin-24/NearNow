@@ -18,7 +18,7 @@ class OpenStreetMapLocalLifeProvider:
     osrm_endpoint = "https://router.project-osrm.org/route/v1"
     user_agent = "NearNowLocalPlanner/0.1"
 
-    def __init__(self, timeout_seconds: float = 8.0, max_results: int = 10) -> None:
+    def __init__(self, timeout_seconds: float = 10.0, max_results: int = 48) -> None:
         self.timeout_seconds = timeout_seconds
         self.max_results = max_results
 
@@ -123,7 +123,7 @@ class OpenStreetMapLocalLifeProvider:
                 )
             )
 
-        activities.sort(key=lambda item: (item.distance_km, item.name))
+        activities.sort(key=lambda item: self._activity_sort_key(item, scenario_tags))
         return activities[: self.max_results]
 
     def from_overpass_restaurants_payload(
@@ -168,7 +168,7 @@ class OpenStreetMapLocalLifeProvider:
                 )
             )
 
-        restaurants.sort(key=lambda item: (item.distance_km, item.name))
+        restaurants.sort(key=lambda item: self._restaurant_sort_key(item, scenario_tags))
         return restaurants[: self.max_results]
 
     def from_osrm_payload(
@@ -225,7 +225,7 @@ class OpenStreetMapLocalLifeProvider:
                     f'{element_type}(around:{radius_m},{origin.lat:.5f},{origin.lng:.5f})["{key}"="{value}"];'
                 )
         body = "\n  ".join(clauses)
-        return f"[out:json][timeout:8];\n(\n  {body}\n);\nout center {self.max_results * 3};"
+        return f"[out:json][timeout:8];\n(\n  {body}\n);\nout center {max(60, self.max_results * 4)};"
 
     def _activity_filters(self, tags: list[str]) -> list[tuple[str, str]]:
         base = [
@@ -261,11 +261,48 @@ class OpenStreetMapLocalLifeProvider:
                 ("leisure", "dog_park"),
                 ("amenity", "dog_park"),
             ],
+            "宠物": [
+                ("leisure", "park"),
+                ("leisure", "dog_park"),
+                ("amenity", "dog_park"),
+            ],
+            "狗公园": [
+                ("leisure", "dog_park"),
+                ("amenity", "dog_park"),
+            ],
+            "遛狗": [
+                ("leisure", "park"),
+                ("leisure", "dog_park"),
+                ("amenity", "dog_park"),
+            ],
             "elder": [
                 ("leisure", "park"),
                 ("leisure", "garden"),
-                ("amenity", "library"),
-                ("tourism", "museum"),
+                ("shop", "mall"),
+            ],
+            "公园": [
+                ("leisure", "park"),
+            ],
+            "花园": [
+                ("leisure", "garden"),
+            ],
+            "商场": [
+                ("shop", "mall"),
+            ],
+            "慢走": [
+                ("leisure", "park"),
+                ("leisure", "garden"),
+                ("shop", "mall"),
+            ],
+            "散步": [
+                ("leisure", "park"),
+                ("leisure", "garden"),
+                ("shop", "mall"),
+            ],
+            "stroll": [
+                ("leisure", "park"),
+                ("leisure", "garden"),
+                ("shop", "mall"),
             ],
             "bestie": [
                 ("amenity", "cafe"),
@@ -276,13 +313,32 @@ class OpenStreetMapLocalLifeProvider:
                 ("amenity", "cafe"),
                 ("shop", "mall"),
             ],
+            "下午茶": [
+                ("amenity", "cafe"),
+                ("shop", "mall"),
+            ],
+            "咖啡": [
+                ("amenity", "cafe"),
+            ],
             "photo_friendly": [
                 ("tourism", "gallery"),
                 ("tourism", "attraction"),
                 ("shop", "mall"),
                 ("leisure", "park"),
             ],
+            "拍照": [
+                ("tourism", "gallery"),
+                ("tourism", "attraction"),
+                ("shop", "mall"),
+                ("leisure", "park"),
+            ],
             "date": [
+                ("tourism", "gallery"),
+                ("amenity", "cinema"),
+                ("amenity", "theatre"),
+                ("leisure", "park"),
+            ],
+            "约会": [
                 ("tourism", "gallery"),
                 ("amenity", "cinema"),
                 ("amenity", "theatre"),
@@ -310,10 +366,34 @@ class OpenStreetMapLocalLifeProvider:
                 ("leisure", "sports_centre"),
                 ("shop", "mall"),
             ],
+            "团建": [
+                ("amenity", "community_centre"),
+                ("leisure", "sports_centre"),
+                ("shop", "mall"),
+            ],
+            "运动": [
+                ("leisure", "sports_centre"),
+            ],
             "exhibition": [
                 ("tourism", "gallery"),
                 ("tourism", "museum"),
                 ("amenity", "arts_centre"),
+            ],
+            "展览": [
+                ("tourism", "gallery"),
+                ("tourism", "museum"),
+                ("amenity", "arts_centre"),
+            ],
+            "艺术": [
+                ("tourism", "gallery"),
+                ("tourism", "museum"),
+                ("amenity", "arts_centre"),
+            ],
+            "电影": [
+                ("amenity", "cinema"),
+            ],
+            "影院": [
+                ("amenity", "cinema"),
             ],
         }
         filters = list(base)
@@ -332,11 +412,7 @@ class OpenStreetMapLocalLifeProvider:
             },
             method="POST",
         )
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, JSONDecodeError, OSError) as exc:
-            raise ProviderAPIError("Overpass API 周边搜索失败。") from exc
+        payload = self._fetch_json_with_retry(request, "Overpass API 周边搜索失败。")
         if not isinstance(payload.get("elements"), list):
             raise ProviderAPIError("Overpass API 返回格式不符合预期。")
         return payload
@@ -348,11 +424,17 @@ class OpenStreetMapLocalLifeProvider:
             f"{self.osrm_endpoint}/{profile}/{coordinates}?{params}",
             headers={"Accept": "application/json", "User-Agent": self.user_agent},
         )
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, JSONDecodeError, OSError) as exc:
-            raise ProviderAPIError("OSRM API 路线查询失败。") from exc
+        return self._fetch_json_with_retry(request, "OSRM API 路线查询失败。")
+
+    def _fetch_json_with_retry(self, request: Request, error_message: str) -> dict:
+        last_error: Exception | None = None
+        for _ in range(2):
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except (HTTPError, URLError, TimeoutError, JSONDecodeError, OSError) as exc:
+                last_error = exc
+        raise ProviderAPIError(error_message) from last_error
 
     def _place_from_element(self, element: dict) -> dict | None:
         tags = element.get("tags") or {}
@@ -376,22 +458,38 @@ class OpenStreetMapLocalLifeProvider:
         tourism = tags.get("tourism", "")
         shop = tags.get("shop", "")
         if leisure in {"park", "garden", "dog_park"}:
-            result.update({"outdoor", "low_walking", "pet_friendly"})
+            result.update({"outdoor", "low_walking", "pet_friendly", "elder_friendly", "stroll_friendly"})
         if amenity in {"dog_park"}:
             result.update({"outdoor", "pet_friendly"})
         if leisure == "playground" or tourism in {"zoo", "theme_park"}:
             result.update({"kid_friendly", "child_safe", "outdoor"})
-        if tourism in {"museum", "gallery"} or amenity in {"arts_centre", "library"}:
-            result.update({"indoor", "quiet", "photo_friendly", "elder_friendly"})
+        if amenity == "library":
+            result.update({"indoor", "quiet", "elder_friendly"})
+        if tourism in {"museum", "gallery"} or amenity == "arts_centre":
+            result.update({"indoor", "quiet", "photo_friendly", "elder_friendly", "bestie"})
+        if tourism == "gallery":
+            result.add("date")
         if amenity in {"cinema", "theatre"}:
             result.update({"indoor", "date", "quiet"})
         if amenity == "cafe":
             result.update({"bestie", "afternoon_tea", "chat_friendly", "quiet"})
         if shop == "mall":
-            result.update({"indoor", "group_friendly", "photo_friendly", "transit_accessible"})
+            result.update(
+                {
+                    "indoor",
+                    "group_friendly",
+                    "photo_friendly",
+                    "transit_accessible",
+                    "bestie",
+                    "elder_friendly",
+                    "low_walking",
+                    "stroll_friendly",
+                }
+            )
+        if leisure == "sports_centre" or amenity == "community_centre":
+            result.update({"group_friendly", "team_building"})
         if self._truthy(tags.get("dog")) or self._truthy(tags.get("dogs")) or self._truthy(tags.get("pets")):
             result.add("pet_friendly")
-        result.update(set(scenario_tags) & {"bestie", "date", "partner", "friend_group", "colleague", "team_building"})
         return result
 
     def _restaurant_tags(self, tags: dict, scenario_tags: list[str]) -> set[str]:
@@ -400,21 +498,95 @@ class OpenStreetMapLocalLifeProvider:
         cuisine = str(tags.get("cuisine", "")).lower()
         name = self._name(tags).lower()
         if amenity == "cafe":
-            result.update({"bestie", "afternoon_tea", "chat_friendly", "quiet"})
+            result.update({"bestie", "afternoon_tea", "chat_friendly", "quiet", "beverage_light"})
+        if amenity in {"restaurant", "food_court"}:
+            result.add("proper_meal")
+        if amenity == "fast_food":
+            result.add("quick_meal")
         if amenity in {"restaurant", "cafe", "food_court"}:
             result.add("elder_friendly")
         if amenity in {"bar", "pub"}:
             result.add("date")
-        if any(word in cuisine or word in name for word in ("vegetarian", "vegan", "salad", "healthy", "tea", "coffee", "轻食", "素")):
+        if any(word in cuisine or word in name for word in ("vegetarian", "vegan", "salad", "healthy", "轻食", "素")):
             result.update({"low_calorie", "light_food"})
-        if any(word in cuisine for word in ("chinese", "japanese", "korean", "asian", "noodle")):
+        if any(word in cuisine or word in name for word in ("tea", "coffee", "咖啡", "luckin", "starbucks", "瑞幸", "星巴克")):
+            result.update({"beverage_only", "beverage_light"})
+        if any(
+            word in cuisine or word in name
+            for word in (
+                "bbq",
+                "barbecue",
+                "grill",
+                "hotpot",
+                "hot pot",
+                "teppanyaki",
+                "spice",
+                "cray",
+                "呷哺",
+                "烧烤",
+                "烤肉",
+                "火锅",
+                "串",
+                "麻辣",
+                "小龙虾",
+                "spicy",
+            )
+        ):
+            result.add("heavy_food")
+        if any(word in cuisine or word in name for word in ("japanese", "noodle", "soup", "dumpling", "sushi", "粥", "汤", "蒸")):
             result.add("light_food")
         if self._truthy(tags.get("outdoor_seating")):
-            result.add("outdoor")
+            result.update({"outdoor", "pet_possible"})
         if self._truthy(tags.get("dog")) or self._truthy(tags.get("dogs")) or self._truthy(tags.get("pets")):
-            result.update({"pet_friendly", "outdoor"})
-        result.update(set(scenario_tags) & {"bestie", "date", "partner", "friend_group", "colleague"})
+            result.update({"pet_friendly", "pet_possible", "outdoor"})
         return result
+
+    def _activity_sort_key(self, activity: Activity, scenario_tags: list[str]) -> tuple[float, float, str]:
+        tags = set(activity.tags)
+        scenario = set(scenario_tags)
+        score = len(tags & scenario) * 4
+        if {"pet", "pet_friendly"} & scenario:
+            score += 12 if "pet_friendly" in tags else -8
+        if {"child", "kid_friendly"} & scenario:
+            score += 10 if {"kid_friendly", "child_safe"} & tags else 0
+        if {"bestie", "afternoon_tea"} & scenario:
+            score += 8 if {"bestie", "afternoon_tea", "chat_friendly"} & tags else 0
+        if {"partner", "date"} & scenario:
+            score += 8 if {"date", "quiet", "photo_friendly"} & tags else 0
+        if {"elder", "low_walking"} & scenario:
+            score += 12 if {"stroll_friendly", "low_walking", "elder_friendly"} & tags else 0
+            if "stroll" in scenario and "stroll_friendly" not in tags:
+                score -= 8
+        return (-score, activity.distance_km, activity.name)
+
+    def _restaurant_sort_key(self, restaurant: Restaurant, scenario_tags: list[str]) -> tuple[float, float, str]:
+        tags = set(restaurant.tags)
+        scenario = set(scenario_tags)
+        score = len(tags & scenario) * 4
+        if {"pet", "pet_friendly"} & scenario:
+            if "pet_friendly" in tags:
+                score += 12
+            elif "pet_possible" in tags:
+                score += 7
+            else:
+                score -= 8
+        if {"bestie", "afternoon_tea"} & scenario:
+            score += 7 if {"bestie", "afternoon_tea", "chat_friendly"} & tags else 0
+        if {"partner", "date"} & scenario:
+            score += 6 if {"date", "quiet"} & tags else 0
+        if {"elder", "low_walking"} & scenario:
+            score += 6 if {"elder_friendly", "light_food", "quiet"} & tags else 0
+        if {"proper_meal", "light_food"} & scenario:
+            score += 8 if {"proper_meal", "light_food"} & tags else 0
+            if "light_food" in scenario and "light_food" in tags:
+                score += 10
+            if "heavy_food" in tags:
+                score -= 18
+            if "beverage_only" in tags:
+                score -= 12
+            if "quick_meal" in tags:
+                score -= 6
+        return (-score, restaurant.distance_km, restaurant.name)
 
     def _location(self, tags: dict, fallback: str) -> str:
         full = self._clean(tags.get("addr:full"))

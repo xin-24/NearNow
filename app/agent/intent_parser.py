@@ -156,12 +156,15 @@ class IntentParser:
         mapping = {
             "nearby": ("附近", "别太远", "离家近", "周边"),
             "low_calorie": ("减肥", "低脂", "轻食", "清淡"),
+            "light_food": ("清淡", "少油", "少盐", "养生"),
             "quiet": ("安静", "不吵", "聊天"),
             "photo_friendly": ("拍照", "出片", "好看"),
             "date": ("约会", "仪式感", "浪漫"),
             "pet_friendly": ("宠物", "狗", "猫", "毛孩子"),
             "low_walking": ("少走路", "别太累", "不累"),
             "budget_control": ("预算", "别太贵", "人均"),
+            "stroll": ("走走", "逛逛", "转转", "散步", "遛弯"),
+            "proper_meal": ("晚饭", "吃饭", "用餐", "正餐", "餐厅"),
         }
         for key, words in mapping.items():
             if self._contains(message, *words):
@@ -233,4 +236,3 @@ class IntentParser:
 
     def _contains(self, message: str, *words: str) -> bool:
         return any(word in message for word in words)
-

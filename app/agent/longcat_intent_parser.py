@@ -65,8 +65,8 @@ class LongCatIntentParser:
                     "start_time": "HH:MM",
                     "end_time": "HH:MM",
                     "radius_km": "number",
-                    "preferences": ["nearby", "low_calorie", "quiet"],
-                    "scenario_tags": ["family", "bestie", "pet_friendly"],
+                    "preferences": ["nearby", "low_calorie", "light_food", "quiet", "stroll", "proper_meal"],
+                    "scenario_tags": ["family", "bestie", "pet_friendly", "elder", "stroll"],
                     "participants": [
                         {
                             "relation": "self|spouse|partner|child|friend_group|bestie|pet|elder|colleague|client|companion",
@@ -106,8 +106,8 @@ class LongCatIntentParser:
             start_time=self._time_value(data.get("start_time"), fallback.start_time),
             end_time=self._time_value(data.get("end_time"), fallback.end_time),
             participants=participants,
-            preferences=self._string_list(data.get("preferences")) or fallback.preferences,
-            scenario_tags=self._string_list(data.get("scenario_tags")) or fallback.scenario_tags,
+            preferences=self._merged_strings(fallback.preferences, data.get("preferences")),
+            scenario_tags=self._merged_strings(fallback.scenario_tags, data.get("scenario_tags")),
             radius_km=self._radius(data.get("radius_km"), fallback.radius_km),
             required_actions=fallback.required_actions,
         )
@@ -159,6 +159,13 @@ class LongCatIntentParser:
         if not isinstance(values, list):
             return []
         return [item for item in (self._clean_string(value) for value in values) if item]
+
+    def _merged_strings(self, fallback: list[str], values: Any) -> list[str]:
+        merged: list[str] = []
+        for item in [*fallback, *self._string_list(values)]:
+            if item and item not in merged:
+                merged.append(item)
+        return merged
 
     def _time_value(self, value: Any, fallback: str) -> str:
         text = self._clean_string(value)
