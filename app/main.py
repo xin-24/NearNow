@@ -15,7 +15,7 @@ from app.storage.repository import StorageError, create_repository
 
 
 ROOT = Path(__file__).resolve().parent.parent
-WEB_ROOT = ROOT / "web"
+WEB_ROOT = ROOT / "web" / "dist"
 REPOSITORY = create_repository()
 AUTH = AuthService(REPOSITORY)
 AGENT = LocalPlannerAgent()

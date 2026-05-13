@@ -1,0 +1,21 @@
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-strong) 66%, transparent);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 680;
+  line-height: 1.4;
+}
+
+.warning .chip {
+  border-color: rgba(249, 115, 22, 0.3);
+  color: var(--orange);
+}

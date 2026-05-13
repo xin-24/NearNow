@@ -1,0 +1,40 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.grid button {
+  display: grid;
+  gap: 8px;
+  min-height: 104px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  box-shadow: 0 12px 34px rgba(15, 23, 42, 0.06);
+}
+
+.grid button:hover {
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.grid span {
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.grid strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+@media (max-width: 860px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

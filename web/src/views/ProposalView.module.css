@@ -1,0 +1,180 @@
+.view {
+  display: grid;
+  gap: 22px;
+  animation: viewIn 420ms ease both;
+}
+
+@keyframes viewIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.head h2 {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 38px);
+  font-weight: 620;
+  line-height: 1.08;
+}
+
+.head p:last-child {
+  max-width: 680px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.ghostBtn {
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0 18px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.insightGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.insightGrid article {
+  display: grid;
+  gap: 8px;
+  min-height: 98px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.06);
+}
+
+.insightGrid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.insightGrid strong {
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.planBoard {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+  gap: 18px;
+}
+
+.timelineColumn {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(22px);
+  padding: 22px;
+}
+
+.sideColumn {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.sideCard {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(22px);
+  padding: 18px;
+}
+
+.timelineColumn h3,
+.sideCard h3 {
+  margin: 0 0 16px;
+  font-size: 17px;
+}
+
+.dock {
+  position: sticky;
+  bottom: 18px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: min(720px, 100%);
+  margin: 8px auto 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(22px);
+}
+
+.dock p {
+  margin: 0 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.primaryBtn {
+  min-height: 46px;
+  border: 0;
+  border-radius: 16px;
+  padding: 0 24px;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 760;
+  box-shadow: 0 14px 34px rgba(79, 70, 229, 0.28);
+  cursor: pointer;
+  transition: transform 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.primaryBtn:hover {
+  transform: translateY(-1px);
+  background: var(--primary-strong);
+}
+
+@media (max-width: 860px) {
+  .head,
+  .dock {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .insightGrid,
+  .planBoard {
+    grid-template-columns: 1fr;
+  }
+  .dock {
+    bottom: 10px;
+  }
+}
+
+@media (max-width: 560px) {
+  .timelineColumn,
+  .sideCard {
+    border-radius: 22px;
+  }
+}

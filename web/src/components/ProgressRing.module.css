@@ -1,0 +1,40 @@
+.ring {
+  position: relative;
+  width: 132px;
+  height: 132px;
+}
+
+.ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ring circle {
+  fill: none;
+  stroke-width: 9;
+}
+
+.track {
+  stroke: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.arc {
+  stroke: var(--primary);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 260ms ease;
+}
+
+.ring div {
+  position: absolute;
+  inset: 16px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 700;
+  backdrop-filter: blur(18px);
+}

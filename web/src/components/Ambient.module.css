@@ -1,0 +1,45 @@
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mesh {
+  position: absolute;
+  width: 62vw;
+  height: 62vw;
+  filter: blur(120px);
+  opacity: 0.45;
+  transform: rotate(12deg);
+}
+
+.meshA {
+  top: -28vw;
+  left: -18vw;
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.5), rgba(217, 70, 239, 0.28));
+}
+
+.meshB {
+  right: -22vw;
+  bottom: -30vw;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.26), rgba(79, 70, 229, 0.32));
+}
+
+.grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.08;
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.05) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+
+:global(body.dark) .grain {
+  opacity: 0.16;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+}

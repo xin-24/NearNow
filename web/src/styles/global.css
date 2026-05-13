@@ -1,0 +1,68 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f8fc;
+  --surface: rgba(255, 255, 255, 0.78);
+  --surface-strong: #ffffff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --faint: #94a3b8;
+  --line: rgba(148, 163, 184, 0.24);
+  --line-strong: rgba(99, 102, 241, 0.26);
+  --primary: #4f46e5;
+  --primary-strong: #3730a3;
+  --pink: #d946ef;
+  --green: #10b981;
+  --orange: #f97316;
+  --shadow: 0 24px 70px rgba(15, 23, 42, 0.1);
+  --radius-xl: 28px;
+  --radius-lg: 20px;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+body.dark {
+  color-scheme: dark;
+  --bg: #050507;
+  --surface: rgba(15, 15, 18, 0.74);
+  --surface-strong: #0f0f13;
+  --text: #f8fafc;
+  --muted: rgba(226, 232, 240, 0.62);
+  --faint: rgba(226, 232, 240, 0.38);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(129, 140, 248, 0.34);
+  --primary: #818cf8;
+  --primary-strong: #a5b4fc;
+  --shadow: 0 28px 90px rgba(0, 0, 0, 0.48);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: var(--bg);
+  color: var(--text);
+  transition: background-color 700ms ease, color 700ms ease;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}

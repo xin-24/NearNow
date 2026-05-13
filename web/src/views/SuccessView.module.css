@@ -1,0 +1,64 @@
+.view {
+  display: grid;
+  justify-items: center;
+  gap: 22px;
+  min-height: 560px;
+  align-content: center;
+  text-align: center;
+  animation: viewIn 420ms ease both;
+}
+
+@keyframes viewIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.view h2 {
+  margin: 0;
+  font-size: clamp(32px, 5vw, 48px);
+  font-weight: 620;
+  line-height: 1.08;
+}
+
+.view > p {
+  max-width: 560px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  border: 1px solid rgba(16, 185, 129, 0.24);
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.1);
+  box-shadow: 0 24px 60px rgba(16, 185, 129, 0.16);
+}
+
+.mark span {
+  width: 42px;
+  height: 24px;
+  border-left: 5px solid var(--green);
+  border-bottom: 5px solid var(--green);
+  transform: rotate(-45deg) translate(3px, -4px);
+}
+
+.ghostBtn {
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0 18px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 760;
+  cursor: pointer;
+}
+
+@media (max-width: 560px) {
+  .view h2 {
+    font-size: 30px;
+  }
+}
