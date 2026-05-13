@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useTheme } from "./hooks/useTheme";
 import { useAuth } from "./hooks/useAuth";
 import { useLocation } from "./hooks/useLocation";
@@ -11,7 +11,7 @@ import { ProposalView } from "./views/ProposalView";
 import { ExecutingView } from "./views/ExecutingView";
 import { SuccessView } from "./views/SuccessView";
 import { ErrorView } from "./views/ErrorView";
-import { generatePlan, confirmPlan } from "./api/client";
+import { generatePlan, confirmPlan, createAbortController, isAborted } from "./api/client";
 import { parseCompanions, selectedRouteMode, formatCompanionLine } from "./utils/route";
 import type { Plan, ExecutionResponse } from "./api/types";
 import styles from "./App.module.css";
@@ -28,6 +28,9 @@ export function App() {
   const [execution, setExecution] = useState<ExecutionResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [defaultCompanions, setDefaultCompanions] = useState("");
+  const [lastGoal, setLastGoal] = useState("");
+  const [lastCompanions, setLastCompanions] = useState("");
+  const abortRef = useRef<AbortController | null>(null);
 
   const handleLogin = useCallback(
     async (username: string, password: string, displayName: string) => {
@@ -63,17 +66,28 @@ export function App() {
         return;
       }
 
+      setLastGoal(goal);
+      setLastCompanions(companionsText);
       setPlan(null);
       setExecution(null);
       setCurrentView("analyzing");
 
+      const controller = createAbortController();
+      abortRef.current = controller;
+
       try {
-        const data = await generatePlan(goal, "real", userContext, parseCompanions(companionsText));
+        const data = await generatePlan(goal, "real", userContext, parseCompanions(companionsText), controller.signal);
         setPlan(data);
         setCurrentView("proposal");
       } catch (err) {
+        if (isAborted(err)) {
+          setCurrentView("input");
+          return;
+        }
         setErrorMessage(err instanceof Error ? err.message : "规划失败");
         setCurrentView("error");
+      } finally {
+        abortRef.current = null;
       }
     },
     [user, location],
@@ -83,22 +97,41 @@ export function App() {
     if (!plan) return;
     setCurrentView("executing");
 
+    const controller = createAbortController();
+    abortRef.current = controller;
+
     try {
       const data = await confirmPlan(
         plan.plan_id,
         plan.pending_actions.map((a) => a.action_id),
         selectedRouteMode(plan),
+        controller.signal,
       );
       setExecution(data);
       setCurrentView("success");
     } catch (err) {
+      if (isAborted(err)) {
+        setCurrentView("proposal");
+        return;
+      }
       setErrorMessage(err instanceof Error ? err.message : "执行失败");
       setCurrentView("error");
+    } finally {
+      abortRef.current = null;
     }
   }, [plan]);
 
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
+
   const handleRouteChange = useCallback((updatedPlan: Plan) => {
-    setPlan({ ...updatedPlan });
+    setPlan(updatedPlan);
+  }, []);
+
+  const handlePlanUpdate = useCallback((updatedPlan: Plan) => {
+    setPlan(updatedPlan);
   }, []);
 
   const handleNewPlan = useCallback(() => {
@@ -123,8 +156,8 @@ export function App() {
         {currentView === "login" && <LoginView onLogin={handleLogin} />}
         {currentView === "input" && (
           <InputView
-            defaultGoal="今天下午是空的，想和老婆孩子、朋友出去玩几个小时，别离家太远，帮我安排一下。"
-            defaultCompanions={defaultCompanions}
+            defaultGoal={lastGoal || "今天下午是空的，想和老婆孩子、朋友出去玩几个小时，别离家太远，帮我安排一下。"}
+            defaultCompanions={lastCompanions || defaultCompanions}
             origin={location.origin}
             locationStatus={location.status}
             locating={location.locating}
@@ -133,16 +166,19 @@ export function App() {
             onPlan={handlePlan}
           />
         )}
-        {currentView === "analyzing" && <AnalyzingView />}
+        {currentView === "analyzing" && <AnalyzingView onCancel={handleCancel} />}
         {currentView === "proposal" && plan && (
           <ProposalView
             plan={plan}
             onEdit={handleEdit}
             onConfirm={handleConfirm}
             onRouteChange={handleRouteChange}
+            onPlanUpdate={handlePlanUpdate}
           />
         )}
-        {currentView === "executing" && plan && <ExecutingView actions={plan.pending_actions} />}
+        {currentView === "executing" && plan && (
+          <ExecutingView actions={plan.pending_actions} onCancel={handleCancel} />
+        )}
         {currentView === "success" && execution && <SuccessView result={execution} onNewPlan={handleNewPlan} />}
         {currentView === "error" && <ErrorView message={errorMessage} onBack={handleBack} />}
       </main>

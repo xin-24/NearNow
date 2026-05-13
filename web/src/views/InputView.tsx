@@ -26,6 +26,23 @@ export function InputView({
 }: Props) {
   const [goal, setGoal] = useState(defaultGoal);
   const [companions, setCompanions] = useState(defaultCompanions);
+  const [goalError, setGoalError] = useState("");
+
+  const handlePlan = () => {
+    if (!goal.trim()) {
+      setGoalError("请输入活动目标，例如「下午带孩子出去玩」");
+      return;
+    }
+    setGoalError("");
+    onPlan(goal, companions);
+  };
+
+  const handleGoalChange = (value: string) => {
+    setGoal(value);
+    if (goalError && value.trim()) {
+      setGoalError("");
+    }
+  };
 
   return (
     <section className={styles.view}>
@@ -38,11 +55,13 @@ export function InputView({
       <section className={styles.composer}>
         <label className={styles.label}>活动目标</label>
         <textarea
-          className={styles.textarea}
+          className={`${styles.textarea} ${goalError ? styles.textareaError : ""}`}
           rows={5}
           value={goal}
-          onChange={(e) => setGoal(e.target.value)}
+          onChange={(e) => handleGoalChange(e.target.value)}
+          placeholder="例如：下午带老婆孩子出去玩几个小时，别太远"
         />
+        {goalError && <p className={styles.fieldError}>{goalError}</p>}
         <label className={styles.label}>通知同行人</label>
         <textarea
           className={styles.compactTextarea}
@@ -68,14 +87,14 @@ export function InputView({
               </span>
             </label>
           </div>
-          <button className={styles.planBtn} type="button" onClick={() => onPlan(goal, companions)}>
+          <button className={styles.planBtn} type="button" onClick={handlePlan}>
             <span>生成方案</span>
           </button>
         </div>
         <p className={`${styles.locationStatus} ${styles[locationStatus.state]}`}>{locationStatus.message}</p>
       </section>
 
-      <ExampleGrid onSelect={(text) => setGoal(text)} />
+      <ExampleGrid onSelect={(text) => { setGoal(text); setGoalError(""); }} />
     </section>
   );
 }

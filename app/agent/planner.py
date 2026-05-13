@@ -12,6 +12,7 @@ from app.domain.models import (
 )
 from app.providers.base import LocalLifeProvider
 from app.providers.longcat_client import LongCatAPIError
+from app.providers.meituan_link import MeituanLinkBuilder
 from app.utils.ids import next_action_id, next_plan_id
 from app.utils.time_utils import add_minutes
 
@@ -25,9 +26,11 @@ class PlanningEngine:
         self,
         provider: LocalLifeProvider,
         candidate_selector: LongCatCandidateSelector | None = None,
+        meituan_links: MeituanLinkBuilder | None = None,
     ) -> None:
         self.provider = provider
         self.candidate_selector = candidate_selector
+        self.meituan_links = meituan_links or MeituanLinkBuilder()
 
     def generate_plan(self, context: PlanningContext) -> Plan:
         intent = context.intent
@@ -203,17 +206,29 @@ class PlanningEngine:
                     },
                 )
             )
-        if restaurant.reservation_required:
+        if restaurant.reservation_required or self._supports_restaurant_handoff(restaurant):
+            payload = {
+                "restaurant_id": restaurant.restaurant_id,
+                "party_size": intent.party_size,
+                "arrival_time": dinner_start,
+            }
+            if self._supports_restaurant_handoff(restaurant):
+                handoff = self.meituan_links.restaurant_search(restaurant, context)
+                payload.update(
+                    {
+                        "handoff_provider": handoff["provider"],
+                        "handoff_label": handoff["label"],
+                        "handoff_url": handoff["url"],
+                        "handoff_query": handoff["query"],
+                        "handoff_note": handoff["note"],
+                    }
+                )
             pending_actions.append(
                 PendingAction(
                     action_id=next_action_id(),
                     type="reserve_restaurant",
                     target=restaurant.name,
-                    payload={
-                        "restaurant_id": restaurant.restaurant_id,
-                        "party_size": intent.party_size,
-                        "arrival_time": dinner_start,
-                    },
+                    payload=payload,
                 )
             )
         pending_actions.append(
@@ -292,6 +307,9 @@ class PlanningEngine:
 
     def _same_candidate_places(self, left: CandidateTuple, right: CandidateTuple) -> bool:
         return left[1].activity_id == right[1].activity_id and left[2].restaurant_id == right[2].restaurant_id
+
+    def _supports_restaurant_handoff(self, restaurant: Restaurant) -> bool:
+        return restaurant.provider == "osm_overpass"
 
     def _satisfies_activity_hard_constraints(self, activity: Activity, context: PlanningContext) -> bool:
         tags = set(activity.tags)

@@ -62,6 +62,12 @@ export interface ExecutionResult {
   confirmation_no?: string;
   message_id?: string;
   booking_id?: string;
+  handoff_required?: boolean;
+  handoff_provider?: string;
+  handoff_url?: string;
+  handoff_label?: string;
+  handoff_query?: string;
+  message?: string;
 }
 
 export interface ExecutionResponse {

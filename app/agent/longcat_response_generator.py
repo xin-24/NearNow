@@ -30,6 +30,8 @@ class LongCatResponseGenerator:
                         "不要声称已经确认营业、无需等位、已订座、有余位、评分或人均；这些状态必须提示出发前复查。"
                         "只有 provider 字段为 osm_overpass 时才允许称为真实地图 POI；"
                         "provider 为 mock 时必须称为本地演示数据，不要说来自真实地图。"
+                        "如果 reserve_restaurant 动作 payload 包含 handoff_provider 或 handoff_url，"
+                        "只能说已提供第三方跳转链接，需要用户在外部页面自行确认并完成下单或订座，不能说已经自动订座。"
                     ),
                 },
                 {

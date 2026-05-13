@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { ProgressRing } from "../components/ProgressRing";
+import { useEffect, useState } from "react";
 import { StepList } from "../components/StepList";
 import styles from "./ProcessView.module.css";
 
@@ -10,25 +9,31 @@ const analyzingSteps = [
   "生成可执行活动方案",
 ];
 
-export function AnalyzingView() {
-  const [percent, setPercent] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval>>();
+interface Props {
+  onCancel: () => void;
+}
+
+export function AnalyzingView({ onCancel }: Props) {
+  const [activeStep, setActiveStep] = useState(0);
 
   useEffect(() => {
-    let progress = 0;
-    timerRef.current = setInterval(() => {
-      progress = Math.min(100, progress + 25);
-      setPercent(progress);
-      if (progress >= 100) clearInterval(timerRef.current);
-    }, 900 / 4);
-    return () => clearInterval(timerRef.current);
+    const timer = setInterval(() => {
+      setActiveStep((prev) => Math.min(prev + 1, analyzingSteps.length - 1));
+    }, 2000);
+    return () => clearInterval(timer);
   }, []);
 
   return (
     <section className={styles.view}>
-      <ProgressRing percent={percent} />
+      <div className={styles.spinner}>
+        <div className={styles.spinnerRing}></div>
+      </div>
       <h2>Agent 正在规划</h2>
-      <StepList steps={analyzingSteps} progress={percent} />
+      <p className={styles.hint}>正在分析你的需求并匹配附近资源，通常需要 5-10 秒...</p>
+      <StepList steps={analyzingSteps} activeIndex={activeStep} />
+      <button className={styles.cancelBtn} type="button" onClick={onCancel}>
+        取消
+      </button>
     </section>
   );
 }

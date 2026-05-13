@@ -12,6 +12,14 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return payload.data;
 }
 
+export function createAbortController(): AbortController {
+  return new AbortController();
+}
+
+export function isAborted(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
 export async function login(username: string, password: string, displayName: string): Promise<{ user: User }> {
   return request("/api/auth/login", {
     method: "POST",
@@ -36,10 +44,12 @@ export async function generatePlan(
   mode: string,
   userContext: Record<string, unknown>,
   companions: Companion[],
+  signal?: AbortSignal,
 ): Promise<Plan> {
   return request("/api/agent/plan", {
     method: "POST",
     body: JSON.stringify({ message, mode, user_context: userContext, companions }),
+    signal,
   });
 }
 
@@ -47,6 +57,7 @@ export async function confirmPlan(
   planId: string,
   actionIds: string[],
   routeMode: string,
+  signal?: AbortSignal,
 ): Promise<ExecutionResponse> {
   return request("/api/agent/confirm", {
     method: "POST",
@@ -55,6 +66,7 @@ export async function confirmPlan(
       confirmed_action_ids: actionIds,
       selected_route_mode: routeMode,
     }),
+    signal,
   });
 }
 

@@ -27,12 +27,14 @@ class ExecutionManager:
                 else:
                     raise ValueError(f"Unsupported action: {action.type}")
                 action.status = ActionStatus.SUCCESS
-                results.append({"action_id": action.action_id, "type": action.type, **payload, "status": "success"})
+                result_status = "handoff_required" if payload.get("handoff_required") else "success"
+                results.append({"action_id": action.action_id, "type": action.type, **payload, "status": result_status})
             except Exception as exc:  # pragma: no cover - defensive guard for real providers
                 action.status = ActionStatus.FAILED
                 results.append({"action_id": action.action_id, "type": action.type, "status": "failed", "error": str(exc)})
 
-        status = "completed" if all(item["status"] == "success" for item in results) else "partial_failed"
+        success_statuses = {"success", "handoff_required"}
+        status = "completed" if all(item["status"] in success_statuses for item in results) else "partial_failed"
         return ExecutionResult(
             plan_id=plan.plan_id,
             execution_status=status,

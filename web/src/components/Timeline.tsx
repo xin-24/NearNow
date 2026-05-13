@@ -2,11 +2,23 @@ import type { ScheduleItem, Plan } from "../api/types";
 import { modeLabel, typeLabel } from "../utils/labels";
 import styles from "./Timeline.module.css";
 
-interface Props {
-  plan: Plan;
+interface EditTime {
+  start: string;
+  end: string;
 }
 
-export function Timeline({ plan }: Props) {
+interface Props {
+  plan: Plan;
+  editingIndex?: number | null;
+  editTime?: EditTime;
+  onEditTimeChange?: (time: EditTime) => void;
+  onStartEdit?: (index: number) => void;
+  onSaveEdit?: () => void;
+  onCancelEdit?: () => void;
+  onRemove?: (index: number) => void;
+}
+
+export function Timeline({ plan, editingIndex, editTime, onEditTimeChange, onStartEdit, onSaveEdit, onCancelEdit, onRemove }: Props) {
   if (!plan.schedule.length) {
     const reasons = plan.risk_notes.length
       ? plan.risk_notes
@@ -27,13 +39,38 @@ export function Timeline({ plan }: Props) {
   return (
     <div className={styles.timeline}>
       {plan.schedule.map((item, index) => (
-        <TimelineItem key={index} item={item} index={index} />
+        <TimelineItem
+          key={index}
+          item={item}
+          index={index}
+          isEditing={editingIndex === index}
+          editTime={editTime}
+          onEditTimeChange={onEditTimeChange}
+          onStartEdit={() => onStartEdit?.(index)}
+          onSaveEdit={onSaveEdit}
+          onCancelEdit={onCancelEdit}
+          canRemove={item.type === "activity" || item.type === "restaurant"}
+          onRemove={() => onRemove?.(index)}
+        />
       ))}
     </div>
   );
 }
 
-function TimelineItem({ item, index }: { item: ScheduleItem; index: number }) {
+interface TimelineItemProps {
+  item: ScheduleItem;
+  index: number;
+  isEditing: boolean;
+  editTime?: EditTime;
+  onEditTimeChange?: (time: EditTime) => void;
+  onStartEdit?: () => void;
+  onSaveEdit?: () => void;
+  onCancelEdit?: () => void;
+  canRemove: boolean;
+  onRemove?: () => void;
+}
+
+function TimelineItem({ item, index, isEditing, editTime, onEditTimeChange, onStartEdit, onSaveEdit, onCancelEdit, canRemove, onRemove }: TimelineItemProps) {
   const badge = item.type === "travel" ? modeLabel(item.transport_mode || "") : item.typeLabel || typeLabel(item.type);
   return (
     <article className={styles.item}>
@@ -42,7 +79,37 @@ function TimelineItem({ item, index }: { item: ScheduleItem; index: number }) {
       </div>
       <div className={styles.card}>
         <div className={styles.cardHead}>
-          <span>{item.start_time} - {item.end_time}</span>
+          {isEditing && editTime ? (
+            <div className={styles.timeEdit}>
+              <input
+                className={styles.timeInput}
+                type="time"
+                value={editTime.start}
+                onChange={(e) => onEditTimeChange?.({ ...editTime, start: e.target.value })}
+              />
+              <span>-</span>
+              <input
+                className={styles.timeInput}
+                type="time"
+                value={editTime.end}
+                onChange={(e) => onEditTimeChange?.({ ...editTime, end: e.target.value })}
+              />
+              <button className={styles.editBtn} type="button" onClick={onSaveEdit}>保存</button>
+              <button className={styles.editBtn} type="button" onClick={onCancelEdit}>取消</button>
+            </div>
+          ) : (
+            <div className={styles.timeDisplay}>
+              <span>{item.start_time} - {item.end_time}</span>
+              <div className={styles.cardActions}>
+                {onStartEdit && (
+                  <button className={styles.editBtn} type="button" onClick={onStartEdit}>改时间</button>
+                )}
+                {canRemove && onRemove && (
+                  <button className={styles.removeBtn} type="button" onClick={onRemove}>移除</button>
+                )}
+              </div>
+            </div>
+          )}
           <em>{badge}</em>
         </div>
         <h3>{item.name}</h3>

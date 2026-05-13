@@ -7,6 +7,7 @@ from pathlib import Path
 from app.auth import AuthError, AuthService
 from app.agent.candidate_selector import LongCatCandidateSelector
 from app.agent.context_builder import ContextBuilder
+from app.agent.executor import ExecutionManager
 from app.agent.intent_parser import IntentParser
 from app.agent.longcat_intent_parser import LongCatIntentParser
 from app.agent.longcat_response_generator import LongCatResponseGenerator
@@ -18,6 +19,7 @@ from app.agent.strategy import LongCatStrategyBuilder, PersonaStrategyBuilder
 from app.domain.models import Activity, Constraint, Coordinates, ParticipantProfile, PlanningIntent, Restaurant, RouteOption, to_plain
 from app.providers.longcat_client import LongCatAPIError, LongCatClient, LongCatConfig, load_env_file
 from app.providers.location_provider import ApproximateAddress, MockLocationProvider, OpenStreetMapLocationProvider
+from app.providers.meituan_link import MeituanLinkBuilder
 from app.providers.mock_provider import MockLocalLifeProvider
 from app.providers.real_provider import OpenStreetMapLocalLifeProvider
 from app.storage.repository import MemoryAppRepository
@@ -578,6 +580,77 @@ class PlanningStrategyTest(unittest.TestCase):
         self.assertNotEqual("需要补充或放宽条件", plan.title)
         self.assertIn("宠物公园", plan.title)
         self.assertTrue(any("必须电话确认" in note for note in plan.risk_notes))
+
+
+class MeituanHandoffTest(unittest.TestCase):
+    def test_meituan_link_uses_city_restaurant_and_location(self) -> None:
+        intent = IntentParser().parse("陪爸妈附近走走，别太累，晚饭清淡一点。")
+        context = ContextBuilder().build(
+            ParticipantConstraintBuilder().normalize(intent),
+            {
+                **USER_CONTEXT,
+                "district": "朝阳区",
+            },
+        )
+        self.assertNotIsInstance(context, dict)
+        restaurant = Restaurant(
+            restaurant_id="restaurant_real_001",
+            name="清禾小馆",
+            location="望湖公园商业街",
+            coordinates=Coordinates(39.992, 116.477),
+            distance_km=0.4,
+            available=True,
+            table_size=4,
+            wait_minutes=0,
+            tags=["proper_meal", "light_food"],
+            reservation_required=False,
+            provider="osm_overpass",
+        )
+
+        link = MeituanLinkBuilder().restaurant_search(restaurant, context)
+
+        self.assertEqual("meituan", link["provider"])
+        self.assertIn("北京 朝阳区 清禾小馆 望湖公园商业街", link["query"])
+        self.assertTrue(link["url"].startswith("https://www.meituan.com/s/"))
+
+    def test_real_restaurant_plan_includes_meituan_handoff_action(self) -> None:
+        intent = IntentParser().parse("下午带狗出去玩，顺便找个能带宠物的地方吃饭。")
+        context = ContextBuilder().build(ParticipantConstraintBuilder().normalize(intent), USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+
+        plan = PlanningEngine(PetPossibleProvider()).generate_plan(context)
+        reserve_action = next(action for action in plan.pending_actions if action.type == "reserve_restaurant")
+
+        self.assertEqual("meituan", reserve_action.payload["handoff_provider"])
+        self.assertIn("露台咖啡", reserve_action.payload["handoff_query"])
+        self.assertTrue(str(reserve_action.payload["handoff_url"]).startswith("https://www.meituan.com/s/"))
+
+    def test_real_provider_returns_meituan_handoff_instead_of_fake_booking(self) -> None:
+        provider = OpenStreetMapLocalLifeProvider()
+
+        result = provider.reserve_restaurant(
+            "restaurant_real_001",
+            {
+                "handoff_provider": "meituan",
+                "handoff_url": "https://www.meituan.com/s/%E6%B8%85%E7%A6%BE%E5%B0%8F%E9%A6%86",
+                "handoff_label": "去美团查看/下单",
+                "handoff_query": "北京 清禾小馆",
+            },
+        )
+
+        self.assertTrue(result["handoff_required"])
+        self.assertEqual("meituan", result["handoff_provider"])
+
+    def test_executor_treats_meituan_handoff_as_completed(self) -> None:
+        intent = IntentParser().parse("下午带狗出去玩，顺便找个能带宠物的地方吃饭。")
+        context = ContextBuilder().build(ParticipantConstraintBuilder().normalize(intent), USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+        plan = PlanningEngine(PetPossibleProvider()).generate_plan(context)
+
+        result = ExecutionManager(OpenStreetMapLocalLifeProvider()).execute(plan)
+
+        self.assertEqual("completed", result.execution_status)
+        self.assertTrue(any(item.get("handoff_required") for item in result.results))
 
 
 class CandidateSelectorTest(unittest.TestCase):

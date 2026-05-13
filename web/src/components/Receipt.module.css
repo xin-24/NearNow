@@ -60,8 +60,13 @@
   margin-top: 4px;
 }
 
-.item code {
+.item code,
+.item a {
   color: var(--primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-weight: 800;
+}
+
+.item a {
+  text-decoration: none;
 }

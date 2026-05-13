@@ -114,6 +114,39 @@
   font-size: 17px;
 }
 
+.actionList {
+  display: grid;
+  gap: 8px;
+}
+
+.actionItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-strong) 66%, transparent);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 680;
+  line-height: 1.4;
+}
+
+.actionItem span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.actionItem a {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .dock {
   position: sticky;
   bottom: 18px;

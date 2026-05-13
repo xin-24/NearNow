@@ -15,14 +15,20 @@ export function Receipt({ result }: Props) {
       </div>
       <div className={styles.items}>
         {result.results.map((item, index) => {
-          const no = item.confirmation_no || item.message_id || item.booking_id || "已记录";
+          const no = item.confirmation_no || item.message_id || item.booking_id || item.message || "已记录";
           return (
             <article key={index} className={styles.item}>
               <div>
                 <span>{actionTypeLabel(item.type)}</span>
                 <strong>{item.status}</strong>
               </div>
-              <code>{no}</code>
+              {item.handoff_url ? (
+                <a href={item.handoff_url} target="_blank" rel="noreferrer">
+                  {item.handoff_label || "去美团查看/下单"}
+                </a>
+              ) : (
+                <code>{no}</code>
+              )}
             </article>
           );
         })}

@@ -1,35 +1,130 @@
+import { useState, useCallback } from "react";
 import type { Plan } from "../api/types";
 import { Timeline } from "../components/Timeline";
 import { ChipList } from "../components/ChipList";
 import { RouteSelector } from "../components/RouteSelector";
 import { modeLabel, actionTypeLabel } from "../utils/labels";
-import { selectedRoute, inferPartySize, selectRoute, preparePlanForRouteEditing } from "../utils/route";
+import { selectedRoute, inferPartySize, preparePlanForRouteEditing } from "../utils/route";
 import styles from "./ProposalView.module.css";
-import { useState } from "react";
 
 interface Props {
   plan: Plan;
   onEdit: () => void;
   onConfirm: () => void;
   onRouteChange: (updatedPlan: Plan) => void;
+  onPlanUpdate: (updatedPlan: Plan) => void;
 }
 
-export function ProposalView({ plan, onEdit, onConfirm, onRouteChange }: Props) {
-  const [, forceUpdate] = useState(0);
+export function ProposalView({ plan, onEdit, onConfirm, onRouteChange, onPlanUpdate }: Props) {
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editTime, setEditTime] = useState({ start: "", end: "" });
+
   preparePlanForRouteEditing(plan);
   const route = selectedRoute(plan);
 
-  const handleRouteSelect = (mode: string) => {
-    selectRoute(plan, mode);
-    onRouteChange(plan);
-    forceUpdate((n) => n + 1);
-  };
+  const handleRouteSelect = useCallback(
+    (mode: string) => {
+      const updated = structuredClone(plan);
+      const r = updated.route_options.find((item) => item.mode === mode);
+      if (!r) return;
+
+      updated.route_options.forEach((item) => {
+        item.selected = item.mode === mode;
+      });
+
+      const travelIndex = updated.schedule.findIndex((item) => item.type === "travel");
+      const travelItem = updated.schedule[travelIndex];
+      if (travelItem) {
+        const prevDuration = travelItem.travel_minutes || route?.duration_minutes || r.duration_minutes;
+        const delta = r.duration_minutes - prevDuration;
+        travelItem.end_time = addMinutes(travelItem.start_time, r.duration_minutes);
+        travelItem.travel_minutes = r.duration_minutes;
+        travelItem.transport_mode = r.mode;
+        if (delta) {
+          updated.schedule.slice(travelIndex + 1).forEach((item) => {
+            item.start_time = addMinutes(item.start_time, delta);
+            item.end_time = addMinutes(item.end_time, delta);
+          });
+        }
+      }
+
+      const baseSummary = updated.base_summary || updated.summary;
+      const lastSchedule = updated.schedule[updated.schedule.length - 1];
+      updated.summary = lastSchedule
+        ? `${baseSummary.replace(/\d{2}:\d{2}\s*前结束/, `${lastSchedule.end_time} 前结束`)} 当前交通已选择${modeLabel(r.mode)}。`
+        : `${baseSummary} 当前交通已选择${modeLabel(r.mode)}。`;
+
+      onRouteChange(updated);
+    },
+    [plan, route, onRouteChange],
+  );
+
+  const handleStartTimeEdit = useCallback(
+    (index: number) => {
+      setEditingIndex(index);
+      setEditTime({ start: plan.schedule[index].start_time, end: plan.schedule[index].end_time });
+    },
+    [plan],
+  );
+
+  const handleStartTimeSave = useCallback(() => {
+    if (editingIndex === null) return;
+    const updated = structuredClone(plan);
+    const item = updated.schedule[editingIndex];
+    const oldStart = item.start_time;
+    item.start_time = editTime.start;
+    item.end_time = editTime.end;
+
+    const delta = minutesDiff(editTime.start, oldStart);
+    if (delta !== 0) {
+      updated.schedule.slice(editingIndex + 1).forEach((s) => {
+        s.start_time = addMinutes(s.start_time, delta);
+        s.end_time = addMinutes(s.end_time, delta);
+      });
+    }
+
+    setEditingIndex(null);
+    onPlanUpdate(updated);
+  }, [plan, editingIndex, editTime, onPlanUpdate]);
+
+  const handleRemoveItem = useCallback(
+    (index: number) => {
+      const updated = structuredClone(plan);
+      const removed = updated.schedule[index];
+      updated.schedule.splice(index, 1);
+      if (removed.type === "activity" || removed.type === "restaurant") {
+        updated.pending_actions = updated.pending_actions.filter((a) => {
+          if (removed.type === "activity" && a.type === "book_activity") return false;
+          if (removed.type === "restaurant" && a.type === "reserve_restaurant") return false;
+          return true;
+        });
+      }
+      onPlanUpdate(updated);
+    },
+    [plan, onPlanUpdate],
+  );
+
+  const executableActions = plan.pending_actions.map((action) => {
+    const handoffUrl = typeof action.payload.handoff_url === "string" ? action.payload.handoff_url : "";
+    const handoffLabel =
+      typeof action.payload.handoff_label === "string" ? action.payload.handoff_label : "去美团查看";
+    return (
+      <div key={action.action_id} className={styles.actionItem}>
+        <span>{`${actionTypeLabel(action.type)} · ${action.target}`}</span>
+        {handoffUrl && (
+          <a href={handoffUrl} target="_blank" rel="noreferrer">
+            {handoffLabel}
+          </a>
+        )}
+      </div>
+    );
+  });
 
   return (
     <section className={styles.view}>
       <div className={styles.head}>
         <div>
-          <p className={styles.eyebrow}>Generated plan</p>
+          <p className={styles.eyebrow}>为你定制的计划</p>
           <h2>{plan.title}</h2>
           <p>{plan.summary}</p>
         </div>
@@ -60,7 +155,16 @@ export function ProposalView({ plan, onEdit, onConfirm, onRouteChange }: Props) 
       <section className={styles.planBoard}>
         <div className={styles.timelineColumn}>
           <h3>时间轴</h3>
-          <Timeline plan={plan} />
+          <Timeline
+            plan={plan}
+            editingIndex={editingIndex}
+            editTime={editTime}
+            onEditTimeChange={setEditTime}
+            onStartEdit={handleStartTimeEdit}
+            onSaveEdit={handleStartTimeSave}
+            onCancelEdit={() => setEditingIndex(null)}
+            onRemove={handleRemoveItem}
+          />
         </div>
         <aside className={styles.sideColumn}>
           <section className={styles.sideCard}>
@@ -73,7 +177,7 @@ export function ProposalView({ plan, onEdit, onConfirm, onRouteChange }: Props) 
           </section>
           <section className={styles.sideCard}>
             <h3>确认后执行</h3>
-            <ChipList items={plan.pending_actions.map((a) => `${actionTypeLabel(a.type)} · ${a.target}`)} />
+            <div className={styles.actionList}>{executableActions}</div>
           </section>
           {plan.risk_notes.length > 0 && (
             <section className={styles.sideCard}>
@@ -92,4 +196,17 @@ export function ProposalView({ plan, onEdit, onConfirm, onRouteChange }: Props) 
       </div>
     </section>
   );
+}
+
+function addMinutes(timeText: string, minutes: number): string {
+  const [hour, minute] = String(timeText || "00:00").split(":").map((v) => Number.parseInt(v, 10));
+  const date = new Date(2000, 0, 1, Number.isFinite(hour) ? hour : 0, Number.isFinite(minute) ? minute : 0);
+  date.setMinutes(date.getMinutes() + minutes);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function minutesDiff(a: string, b: string): number {
+  const [ah, am] = a.split(":").map(Number);
+  const [bh, bm] = b.split(":").map(Number);
+  return (ah * 60 + am) - (bh * 60 + bm);
 }

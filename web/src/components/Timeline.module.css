@@ -127,3 +127,58 @@
   font-size: 13px;
   font-weight: 680;
 }
+
+.timeDisplay {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cardActions {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.editBtn,
+.removeBtn {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.editBtn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.removeBtn:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.timeEdit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.timeInput {
+  width: 80px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+}

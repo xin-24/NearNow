@@ -19,3 +19,48 @@
   font-weight: 620;
   line-height: 1.08;
 }
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.spinner {
+  width: 132px;
+  height: 132px;
+  display: grid;
+  place-items: center;
+}
+
+.spinnerRing {
+  width: 80px;
+  height: 80px;
+  border: 6px solid var(--line);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.cancelBtn {
+  min-height: 40px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 180ms ease, color 180ms ease;
+}
+
+.cancelBtn:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}

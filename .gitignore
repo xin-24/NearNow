@@ -8,4 +8,5 @@ __pycache__/
 docs/logs/
 node_modules/
 dist/
+*.tsbuildinfo
 web-legacy/
