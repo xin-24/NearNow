@@ -12,7 +12,7 @@ from app.domain.models import (
 )
 from app.providers.base import LocalLifeProvider
 from app.providers.longcat_client import LongCatAPIError
-from app.providers.meituan_link import MeituanLinkBuilder
+from app.providers.meituan_link import HandoffLinkBuilder
 from app.utils.ids import next_action_id, next_plan_id
 from app.utils.time_utils import add_minutes
 
@@ -26,11 +26,11 @@ class PlanningEngine:
         self,
         provider: LocalLifeProvider,
         candidate_selector: LongCatCandidateSelector | None = None,
-        meituan_links: MeituanLinkBuilder | None = None,
+        meituan_links: HandoffLinkBuilder | None = None,
     ) -> None:
         self.provider = provider
         self.candidate_selector = candidate_selector
-        self.meituan_links = meituan_links or MeituanLinkBuilder()
+        self.meituan_links = meituan_links or HandoffLinkBuilder()
 
     def generate_plan(self, context: PlanningContext) -> Plan:
         intent = context.intent
@@ -219,6 +219,7 @@ class PlanningEngine:
                         "handoff_provider": handoff["provider"],
                         "handoff_label": handoff["label"],
                         "handoff_url": handoff["url"],
+                        "handoff_links": handoff["links"],
                         "handoff_query": handoff["query"],
                         "handoff_note": handoff["note"],
                     }

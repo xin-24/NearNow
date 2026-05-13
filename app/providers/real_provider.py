@@ -75,14 +75,15 @@ class OpenStreetMapLocalLifeProvider:
         raise ProviderAPIError("真实活动预约接口尚未配置，无法自动预约。")
 
     def reserve_restaurant(self, restaurant_id: str, payload: dict) -> dict:
-        if payload.get("handoff_provider") == "meituan" and payload.get("handoff_url"):
+        if payload.get("handoff_provider") in {"meituan", "multi"} and payload.get("handoff_url"):
             return {
                 "handoff_required": True,
-                "handoff_provider": "meituan",
+                "handoff_provider": str(payload["handoff_provider"]),
                 "handoff_url": str(payload["handoff_url"]),
-                "handoff_label": str(payload.get("handoff_label") or "去美团查看/下单"),
+                "handoff_label": str(payload.get("handoff_label") or "去预订"),
+                "handoff_links": payload.get("handoff_links", []),
                 "handoff_query": str(payload.get("handoff_query") or ""),
-                "message": "已生成美团跳转链接，请在美团页面确认店铺并完成下单或订座。",
+                "message": "已生成跳转链接，请在对应平台确认店铺并完成预订。",
             }
         raise ProviderAPIError("真实餐厅订座接口尚未配置，无法自动订座。")
 

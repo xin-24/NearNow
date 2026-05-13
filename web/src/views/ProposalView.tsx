@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { Plan } from "../api/types";
+import type { Plan, HandoffLink } from "../api/types";
 import { Timeline } from "../components/Timeline";
 import { ChipList } from "../components/ChipList";
 import { RouteSelector } from "../components/RouteSelector";
@@ -107,15 +107,26 @@ export function ProposalView({ plan, onEdit, onConfirm, onRouteChange, onPlanUpd
   const executableActions = plan.pending_actions.map((action) => {
     const handoffUrl = typeof action.payload.handoff_url === "string" ? action.payload.handoff_url : "";
     const handoffLabel =
-      typeof action.payload.handoff_label === "string" ? action.payload.handoff_label : "去美团查看";
+      typeof action.payload.handoff_label === "string" ? action.payload.handoff_label : "去预订";
+    const handoffLinks = Array.isArray(action.payload.handoff_links)
+      ? (action.payload.handoff_links as HandoffLink[])
+      : [];
     return (
       <div key={action.action_id} className={styles.actionItem}>
         <span>{`${actionTypeLabel(action.type)} · ${action.target}`}</span>
-        {handoffUrl && (
+        {handoffLinks.length > 0 ? (
+          <div className={styles.linkGroup}>
+            {handoffLinks.map((link) => (
+              <a key={link.platform} className={styles.linkBtn} href={link.url} target="_blank" rel="noreferrer">
+                {link.label}
+              </a>
+            ))}
+          </div>
+        ) : handoffUrl ? (
           <a href={handoffUrl} target="_blank" rel="noreferrer">
             {handoffLabel}
           </a>
-        )}
+        ) : null}
       </div>
     );
   });

@@ -19,7 +19,7 @@ from app.agent.strategy import LongCatStrategyBuilder, PersonaStrategyBuilder
 from app.domain.models import Activity, Constraint, Coordinates, ParticipantProfile, PlanningIntent, Restaurant, RouteOption, to_plain
 from app.providers.longcat_client import LongCatAPIError, LongCatClient, LongCatConfig, load_env_file
 from app.providers.location_provider import ApproximateAddress, MockLocationProvider, OpenStreetMapLocationProvider
-from app.providers.meituan_link import MeituanLinkBuilder
+from app.providers.meituan_link import HandoffLinkBuilder
 from app.providers.mock_provider import MockLocalLifeProvider
 from app.providers.real_provider import OpenStreetMapLocalLifeProvider
 from app.storage.repository import MemoryAppRepository
@@ -607,11 +607,16 @@ class MeituanHandoffTest(unittest.TestCase):
             provider="osm_overpass",
         )
 
-        link = MeituanLinkBuilder().restaurant_search(restaurant, context)
+        link = HandoffLinkBuilder().restaurant_search(restaurant, context)
 
-        self.assertEqual("meituan", link["provider"])
+        self.assertEqual("multi", link["provider"])
         self.assertIn("北京 朝阳区 清禾小馆 望湖公园商业街", link["query"])
         self.assertTrue(link["url"].startswith("https://www.meituan.com/s/"))
+        self.assertEqual(3, len(link["links"]))
+        platforms = {item["platform"] for item in link["links"]}
+        self.assertIn("meituan_app", platforms)
+        self.assertIn("dianping_app", platforms)
+        self.assertIn("meituan_web", platforms)
 
     def test_real_restaurant_plan_includes_meituan_handoff_action(self) -> None:
         intent = IntentParser().parse("下午带狗出去玩，顺便找个能带宠物的地方吃饭。")
@@ -621,9 +626,11 @@ class MeituanHandoffTest(unittest.TestCase):
         plan = PlanningEngine(PetPossibleProvider()).generate_plan(context)
         reserve_action = next(action for action in plan.pending_actions if action.type == "reserve_restaurant")
 
-        self.assertEqual("meituan", reserve_action.payload["handoff_provider"])
+        self.assertEqual("multi", reserve_action.payload["handoff_provider"])
         self.assertIn("露台咖啡", reserve_action.payload["handoff_query"])
         self.assertTrue(str(reserve_action.payload["handoff_url"]).startswith("https://www.meituan.com/s/"))
+        self.assertIsInstance(reserve_action.payload["handoff_links"], list)
+        self.assertTrue(len(reserve_action.payload["handoff_links"]) >= 2)
 
     def test_real_provider_returns_meituan_handoff_instead_of_fake_booking(self) -> None:
         provider = OpenStreetMapLocalLifeProvider()
@@ -631,15 +638,20 @@ class MeituanHandoffTest(unittest.TestCase):
         result = provider.reserve_restaurant(
             "restaurant_real_001",
             {
-                "handoff_provider": "meituan",
+                "handoff_provider": "multi",
                 "handoff_url": "https://www.meituan.com/s/%E6%B8%85%E7%A6%BE%E5%B0%8F%E9%A6%86",
-                "handoff_label": "去美团查看/下单",
+                "handoff_label": "去预订",
+                "handoff_links": [
+                    {"platform": "meituan_app", "label": "美团 App", "url": "imeituan://www.meituan.com/s/test"},
+                    {"platform": "meituan_web", "label": "美团网页", "url": "https://www.meituan.com/s/test"},
+                ],
                 "handoff_query": "北京 清禾小馆",
             },
         )
 
         self.assertTrue(result["handoff_required"])
-        self.assertEqual("meituan", result["handoff_provider"])
+        self.assertEqual("multi", result["handoff_provider"])
+        self.assertEqual(2, len(result["handoff_links"]))
 
     def test_executor_treats_meituan_handoff_as_completed(self) -> None:
         intent = IntentParser().parse("下午带狗出去玩，顺便找个能带宠物的地方吃饭。")

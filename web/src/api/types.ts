@@ -56,6 +56,12 @@ export interface Plan {
   static_risk_notes?: string[];
 }
 
+export interface HandoffLink {
+  platform: string;
+  label: string;
+  url: string;
+}
+
 export interface ExecutionResult {
   type: string;
   status: string;
@@ -66,6 +72,7 @@ export interface ExecutionResult {
   handoff_provider?: string;
   handoff_url?: string;
   handoff_label?: string;
+  handoff_links?: HandoffLink[];
   handoff_query?: string;
   message?: string;
 }
