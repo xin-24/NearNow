@@ -4,16 +4,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from app.auth import AuthError, AuthService
+from app.agent.context_builder import ContextBuilder
 from app.agent.intent_parser import IntentParser
 from app.agent.longcat_intent_parser import LongCatIntentParser
 from app.agent.longcat_response_generator import LongCatResponseGenerator
 from app.agent.orchestrator import LocalPlannerAgent
+from app.agent.participant_constraints import ParticipantConstraintBuilder
+from app.agent.planner import PlanningEngine
 from app.agent.response_generator import ResponseGenerator
-from app.domain.models import Coordinates, PlanningIntent, to_plain
+from app.domain.models import Activity, Constraint, Coordinates, ParticipantProfile, PlanningIntent, Restaurant, RouteOption, to_plain
 from app.providers.longcat_client import LongCatAPIError, LongCatClient, LongCatConfig, load_env_file
 from app.providers.location_provider import ApproximateAddress, MockLocationProvider, OpenStreetMapLocationProvider
 from app.providers.mock_provider import MockLocalLifeProvider
 from app.providers.real_provider import OpenStreetMapLocalLifeProvider
+from app.storage.repository import MemoryAppRepository
 
 
 USER_CONTEXT = {
@@ -102,6 +107,30 @@ class LocationProviderTest(unittest.TestCase):
                 landmark="望京 SOHO",
             )
         )
+
+
+class ParticipantConstraintTest(unittest.TestCase):
+    def test_participant_roles_are_added_to_search_tags(self) -> None:
+        intent = PlanningIntent(
+            message="下午和老婆孩子朋友出去玩",
+            preferences=["nearby"],
+            scenario_tags=["family", "friend_group"],
+            participants=[
+                ParticipantProfile(relation="self"),
+                ParticipantProfile(relation="spouse"),
+                ParticipantProfile(
+                    relation="child",
+                    constraints=[Constraint("activity", "kid_friendly", "high")],
+                ),
+                ParticipantProfile(relation="friend_group"),
+            ],
+        )
+
+        normalized = ParticipantConstraintBuilder().normalize(intent)
+
+        self.assertIn("child", normalized.scenario_tags)
+        self.assertIn("kid_friendly", normalized.scenario_tags)
+        self.assertIn("spouse", normalized.scenario_tags)
 
 
 class RealLocalLifeProviderTest(unittest.TestCase):
@@ -266,6 +295,61 @@ class LongCatIntegrationTest(unittest.TestCase):
             generator.summarize_plan(plan)
 
 
+class AuthStorageTest(unittest.TestCase):
+    def test_login_creates_session_and_reuses_password(self) -> None:
+        repository = MemoryAppRepository()
+        auth = AuthService(repository)
+
+        created = auth.login_or_register("Xin", "secret123", "小明")
+        self.assertEqual("xin", created["user"]["username"])
+        self.assertEqual("小明", created["user"]["display_name"])
+        self.assertTrue(auth.authenticate(created["token"]))
+
+        with self.assertRaises(AuthError):
+            auth.login_or_register("xin", "wrong123")
+
+        auth.logout(created["token"])
+        self.assertIsNone(auth.authenticate(created["token"]))
+
+    def test_repository_stores_companions_plan_and_notifications(self) -> None:
+        repository = MemoryAppRepository()
+        user = repository.create_user(
+            user_id="user_1",
+            username="xin",
+            display_name="Xin",
+            password_hash="hash",
+            password_salt="salt",
+        )
+        companions = repository.save_companions(
+            user_id=user.user_id,
+            companions=[
+                {"name": "小张", "relation": "朋友", "contact_value": "13800000000"},
+                {"name": "Lily", "relation": "闺蜜", "contact_value": "lily@example.com"},
+            ],
+        )
+        self.assertEqual(2, len(companions))
+        self.assertEqual("phone", companions[0]["contact_method"])
+        self.assertEqual("email", companions[1]["contact_method"])
+
+        repository.save_user_location(user_id=user.user_id, location=USER_CONTEXT)
+        repository.save_plan(
+            user_id=user.user_id,
+            plan_id="plan_1",
+            mode="real",
+            message="下午出去玩",
+            user_context=USER_CONTEXT,
+            plan={"plan_id": "plan_1", "title": "测试计划"},
+        )
+        repository.save_plan_notification_targets(
+            user_id=user.user_id,
+            plan_id="plan_1",
+            companions=companions,
+            message="计划已生成",
+        )
+        repository.mark_plan_notifications_sent(user_id=user.user_id, plan_id="plan_1", message="准备发送")
+        self.assertEqual("ready_to_send", repository.plan_notifications[0]["status"])
+
+
 class StubLongCatClient:
     is_configured = True
 
@@ -328,6 +412,88 @@ class StubGeocoder:
         )
 
 
+class SparseRealTagProvider:
+    provider_name = "osm_overpass"
+
+    def search_activities(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Activity]:
+        return [
+            Activity(
+                activity_id="activity_sparse_001",
+                name="城市影城",
+                category="amenity:cinema",
+                location="附近商场",
+                coordinates=Coordinates(39.99, 116.48),
+                distance_km=1.2,
+                duration_minutes=90,
+                capacity_left=20,
+                tags=["group_friendly", "indoor", "quiet"],
+                reservation_required=False,
+                provider=self.provider_name,
+            )
+        ]
+
+    def search_restaurants(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Restaurant]:
+        return [
+            Restaurant(
+                restaurant_id="restaurant_sparse_001",
+                name="社区餐厅",
+                location="附近商场",
+                coordinates=Coordinates(39.991, 116.481),
+                distance_km=1.3,
+                available=True,
+                table_size=8,
+                wait_minutes=0,
+                tags=["group_table"],
+                reservation_required=False,
+                average_price=80,
+                provider=self.provider_name,
+            )
+        ]
+
+    def calculate_routes(
+        self,
+        origin_name: str,
+        origin: Coordinates,
+        destination_name: str,
+        destination: Coordinates,
+        modes: list[str],
+    ) -> list[RouteOption]:
+        return [
+            RouteOption(
+                from_name=origin_name,
+                to_name=destination_name,
+                mode="ride_hailing",
+                duration_minutes=12,
+                distance_km=2.1,
+                estimated_cost=18,
+                comfort_score=0.9,
+                kid_friendly_score=0.88,
+                walking_minutes=4,
+            )
+        ]
+
+    def book_activity(self, activity_id: str, payload: dict) -> dict:
+        return {"status": "ready"}
+
+    def reserve_restaurant(self, restaurant_id: str, payload: dict) -> dict:
+        return {"status": "ready"}
+
+    def send_notification(self, payload: dict) -> dict:
+        return {"status": "ready"}
+
+
 def to_intent_payload(intent: PlanningIntent) -> dict:
     return {
         "start_time": intent.start_time,
@@ -358,6 +524,18 @@ class IntentParserTest(unittest.TestCase):
 
 
 class LocalPlannerAgentTest(unittest.TestCase):
+    def test_child_constraints_are_preferences_when_real_tags_are_sparse(self) -> None:
+        intent = IntentParser().parse("下午和老婆孩子、朋友出去玩几个小时，别离家太远。")
+        intent = ParticipantConstraintBuilder().normalize(intent)
+        context = ContextBuilder().build(intent, USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+
+        plan = PlanningEngine(SparseRealTagProvider()).generate_plan(context)
+
+        self.assertNotEqual("需要补充或放宽条件", plan.title)
+        self.assertEqual(4, len(plan.schedule))
+        self.assertTrue(any("儿童需求已作为强偏好" in note for note in plan.risk_notes))
+
     def test_pet_plan_uses_pet_friendly_places(self) -> None:
         agent = test_agent()
         response = agent.plan(
@@ -395,6 +573,31 @@ class LocalPlannerAgentTest(unittest.TestCase):
         confirmed = agent.confirm({"plan_id": plan_id, "confirmed_action_ids": action_ids})
         self.assertTrue(confirmed["success"], confirmed)
         self.assertEqual("completed", confirmed["data"]["execution_status"])
+
+    def test_confirm_applies_selected_route_mode(self) -> None:
+        agent = test_agent()
+        planned = agent.plan(
+            {
+                "message": "下午和朋友附近吃饭，再找个地方逛逛。",
+                "user_context": USER_CONTEXT,
+            }
+        )
+        self.assertTrue(planned["success"], planned)
+        plan_id = planned["data"]["plan_id"]
+
+        confirmed = agent.confirm(
+            {
+                "plan_id": plan_id,
+                "selected_route_mode": "walking",
+                "confirmed_action_ids": [item["action_id"] for item in planned["data"]["pending_actions"]],
+            }
+        )
+
+        self.assertTrue(confirmed["success"], confirmed)
+        stored = agent.store.get(plan_id)
+        self.assertIsNotNone(stored)
+        self.assertEqual("walking", stored.schedule[0].transport_mode)
+        self.assertTrue(next(route for route in stored.route_options if route.mode == "walking").selected)
 
     def test_missing_origin_is_recoverable(self) -> None:
         agent = test_agent()

@@ -24,6 +24,10 @@
         </div>
       </div>
       <div class="header-actions">
+        <div id="sessionPill" class="session-pill" hidden>
+          <span id="sessionName">未登录</span>
+          <button id="logoutBtn" type="button">退出</button>
+        </div>
         <div class="provider-pill"><span></span> Real Provider</div>
         <button id="themeBtn" class="icon-button" type="button" aria-label="切换深浅色">
           <span class="theme-icon"></span>
@@ -32,7 +36,32 @@
     </header>
 
     <main class="app-shell">
-      <section id="inputView" class="view input-view">
+      <section id="loginView" class="view login-view">
+        <div class="prompt-copy">
+          <p class="eyebrow">NearNow Account</p>
+          <h2>先确认你的规划身份</h2>
+          <p>后续会把出发位置、计划记录和需要通知的同行人保存到你的账号下。</p>
+        </div>
+
+        <form id="loginForm" class="login-card">
+          <label class="form-field" for="loginUsername">
+            账号
+            <input id="loginUsername" name="username" autocomplete="username" placeholder="例如 xin" />
+          </label>
+          <label class="form-field" for="loginPassword">
+            密码
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="至少 6 位" />
+          </label>
+          <label class="form-field" for="loginDisplayName">
+            显示名称
+            <input id="loginDisplayName" name="display_name" autocomplete="name" placeholder="首次登录时用于创建账号" />
+          </label>
+          <p id="loginError" class="form-status"></p>
+          <button class="primary-action" type="submit">进入 NearNow</button>
+        </form>
+      </section>
+
+      <section id="inputView" class="view input-view" hidden>
         <div class="prompt-copy">
           <p class="eyebrow">Planning · Booking · Route</p>
           <h2>告诉我这几个小时想怎么过</h2>
@@ -42,6 +71,14 @@
         <section class="composer-card">
           <label class="field-label" for="goal">活动目标</label>
           <textarea id="goal" rows="5">今天下午是空的，想和老婆孩子、朋友出去玩几个小时，别离家太远，帮我安排一下。</textarea>
+          <label class="field-label" for="companions">通知同行人</label>
+          <textarea
+            id="companions"
+            class="compact-textarea"
+            rows="3"
+            placeholder="每行一个：小张 朋友 13800000000&#10;Lily 闺蜜 lily@example.com"
+          ></textarea>
+          <p class="companion-help">确认计划后，这些人会作为待发送通知对象保存。</p>
           <div class="composer-footer">
             <div class="location-strip">
               <label class="location-field">

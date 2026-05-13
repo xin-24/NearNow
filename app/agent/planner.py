@@ -224,11 +224,7 @@ class PlanningEngine:
     def _satisfies_activity_hard_constraints(self, activity: Activity, context: PlanningContext) -> bool:
         tags = set(activity.tags)
         relations = {participant.relation for participant in context.intent.participants}
-        if "child" in relations and not {"kid_friendly", "child_safe"} & tags:
-            return False
         if "pet" in relations and "pet_friendly" not in tags:
-            return False
-        if "elder" in relations and not {"low_walking", "elder_friendly", "quiet"} & tags:
             return False
         return True
 
@@ -237,23 +233,33 @@ class PlanningEngine:
         relations = {participant.relation for participant in context.intent.participants}
         if "pet" in relations and "pet_friendly" not in tags:
             return False
-        if "elder" in relations and not {"elder_friendly", "low_walking", "quiet"} & tags:
-            return False
-        if restaurant.wait_minutes > 25:
+        if restaurant.wait_minutes > 40:
             return False
         return True
 
     def _activity_score(self, activity: Activity, context: PlanningContext) -> float:
         tags = set(activity.tags)
         target = set(context.intent.scenario_tags)
-        return len(tags & target) * 10 + max(0, 10 - activity.distance_km)
+        relations = {participant.relation for participant in context.intent.participants}
+        score = len(tags & target) * 10 + max(0, 10 - activity.distance_km)
+        if "child" in relations:
+            score += 14 if {"kid_friendly", "child_safe"} & tags else -8
+        if "elder" in relations:
+            score += 12 if {"low_walking", "elder_friendly", "quiet"} & tags else -6
+        return score
 
     def _restaurant_score(self, restaurant: Restaurant, context: PlanningContext) -> float:
         tags = set(restaurant.tags)
         target = set(context.intent.scenario_tags + context.intent.preferences)
         wait_score = max(0, 10 - restaurant.wait_minutes / 3)
         price_score = 8 if "budget_control" not in target or restaurant.average_price <= 150 else 2
-        return len(tags & target) * 10 + wait_score + price_score
+        relations = {participant.relation for participant in context.intent.participants}
+        score = len(tags & target) * 10 + wait_score + price_score
+        if "child" in relations:
+            score += 8 if {"kid_friendly", "group_table"} & tags else -3
+        if "elder" in relations:
+            score += 8 if {"elder_friendly", "low_walking", "quiet", "light_food"} & tags else -3
+        return score
 
     def _rank_activity_candidates(self, activities: list[Activity], context: PlanningContext) -> list[Activity]:
         return sorted(
@@ -371,6 +377,10 @@ class PlanningEngine:
             notes.append(f"{restaurant.name} 可能需要等待约 {restaurant.wait_minutes} 分钟。")
         if restaurant.provider == "osm_overpass":
             notes.append("餐厅来自真实地图 POI；当前未接入实时营业、评分、人均和订座状态，需要出发前复查。")
+        if "child" in context.intent.scenario_tags:
+            notes.append("儿童需求已作为强偏好排序；真实地图缺少完整亲子标签时，仍需出发前确认活动适龄性。")
+        if "elder" in context.intent.scenario_tags and route.walking_minutes > 10:
+            notes.append("老人同行时建议出发前复查步行距离，必要时改用网约车或驾车。")
         if "pet" in context.intent.scenario_tags:
             notes.append("携宠出行需要到店前再次确认宠物入内规则。")
         return notes

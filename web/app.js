@@ -1,4 +1,5 @@
 const views = {
+  login: document.querySelector("#loginView"),
   input: document.querySelector("#inputView"),
   analyzing: document.querySelector("#analyzingView"),
   proposal: document.querySelector("#proposalView"),
@@ -7,8 +8,18 @@ const views = {
   error: document.querySelector("#errorView"),
 };
 
+const loginForm = document.querySelector("#loginForm");
+const loginUsername = document.querySelector("#loginUsername");
+const loginPassword = document.querySelector("#loginPassword");
+const loginDisplayName = document.querySelector("#loginDisplayName");
+const loginError = document.querySelector("#loginError");
+const sessionPill = document.querySelector("#sessionPill");
+const sessionName = document.querySelector("#sessionName");
+const logoutBtn = document.querySelector("#logoutBtn");
+
 const goal = document.querySelector("#goal");
 const origin = document.querySelector("#origin");
+const companions = document.querySelector("#companions");
 const planBtn = document.querySelector("#planBtn");
 const locateBtn = document.querySelector("#locateBtn");
 const confirmBtn = document.querySelector("#confirmBtn");
@@ -75,11 +86,49 @@ let currentPlan = null;
 let lastExecution = null;
 let currentLocation = null;
 let currentCity = inferCityFromLocation(origin.value) || defaultCity;
+let currentUser = null;
 
 initTheme();
 renderStepList(analyzingSteps, analyzingCopy, 0);
 renderStepList(executingSteps, [], 0);
 updateManualLocationStatus();
+initSession();
+
+loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  loginError.textContent = "";
+  try {
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: loginUsername.value,
+        password: loginPassword.value,
+        display_name: loginDisplayName.value,
+      }),
+    });
+    const payload = await response.json();
+    if (!payload.success) {
+      loginError.textContent = payload.error?.message || "登录失败";
+      return;
+    }
+    applyUser(payload.data.user);
+    await loadCompanions();
+    showView("input");
+  } catch (error) {
+    loginError.textContent = error.message;
+  }
+});
+
+logoutBtn.addEventListener("click", async () => {
+  await fetch("/api/auth/logout", { method: "POST" });
+  currentUser = null;
+  currentPlan = null;
+  lastExecution = null;
+  companions.value = "";
+  updateSessionHeader();
+  showView("login");
+});
 
 document.querySelectorAll("[data-example]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -131,6 +180,11 @@ locateBtn.addEventListener("click", () => {
 });
 
 planBtn.addEventListener("click", async () => {
+  if (!currentUser) {
+    showView("login");
+    loginUsername.focus();
+    return;
+  }
   if (!goal.value.trim()) return;
   const userContext = buildUserContext();
   if (userContext.error) {
@@ -158,6 +212,7 @@ planBtn.addEventListener("click", async () => {
         message: goal.value,
         mode: "real",
         user_context: userContext,
+        companions: parseCompanions(companions.value),
       }),
     });
     const payload = await response.json();
@@ -194,6 +249,7 @@ confirmBtn.addEventListener("click", async () => {
       body: JSON.stringify({
         plan_id: currentPlan.plan_id,
         confirmed_action_ids: currentPlan.pending_actions.map((action) => action.action_id),
+        selected_route_mode: selectedRouteMode(currentPlan),
       }),
     });
     const payload = await response.json();
@@ -219,6 +275,13 @@ newPlanBtn.addEventListener("click", () => {
   showView("input");
 });
 
+routeChips.addEventListener("click", (event) => {
+  const routeButton = event.target.closest("[data-route-mode]");
+  if (!routeButton || !currentPlan) return;
+  selectRoute(routeButton.dataset.routeMode);
+  renderPlan(currentPlan);
+});
+
 function showView(name) {
   Object.entries(views).forEach(([key, view]) => {
     view.hidden = key !== name;
@@ -226,7 +289,46 @@ function showView(name) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+async function initSession() {
+  try {
+    const response = await fetch("/api/auth/me");
+    const payload = await response.json();
+    if (payload.success && payload.data.authenticated) {
+      applyUser(payload.data.user);
+      await loadCompanions();
+      showView("input");
+      return;
+    }
+  } catch (error) {
+    loginError.textContent = error.message;
+  }
+  updateSessionHeader();
+  showView("login");
+}
+
+function applyUser(user) {
+  currentUser = user;
+  updateSessionHeader();
+}
+
+function updateSessionHeader() {
+  sessionPill.hidden = !currentUser;
+  sessionName.textContent = currentUser ? currentUser.display_name || currentUser.username : "未登录";
+}
+
+async function loadCompanions() {
+  try {
+    const response = await fetch("/api/companions");
+    const payload = await response.json();
+    if (!payload.success || !Array.isArray(payload.data) || payload.data.length === 0) return;
+    companions.value = payload.data.map(formatCompanionLine).join("\n");
+  } catch (error) {
+    return;
+  }
+}
+
 function renderPlan(plan) {
+  preparePlanForRouteEditing(plan);
   const selectedRoute = plan.route_options.find((route) => route.selected) || plan.route_options[0];
   const lastSchedule = plan.schedule[plan.schedule.length - 1];
 
@@ -237,13 +339,129 @@ function renderPlan(plan) {
   actionCount.textContent = plan.pending_actions.length;
   finishTime.textContent = lastSchedule ? lastSchedule.end_time : "-";
 
-  timeline.innerHTML = plan.schedule.map(renderScheduleItem).join("");
+  timeline.innerHTML = renderTimeline(plan);
   participantChips.innerHTML = renderChips(plan.participant_summary);
   routeChips.innerHTML = plan.route_options.map(renderRouteItem).join("");
   actionChips.innerHTML = renderChips(plan.pending_actions.map((action) => `${actionTypeLabel(action.type)} · ${action.target}`));
 
   riskSection.hidden = !plan.risk_notes.length;
   riskChips.innerHTML = renderChips(plan.risk_notes);
+}
+
+function preparePlanForRouteEditing(plan) {
+  if (plan.route_edit_ready) return;
+  plan.route_edit_ready = true;
+  plan.base_summary = plan.summary;
+  plan.static_risk_notes = plan.risk_notes.filter((note) => !isRouteRiskNote(note));
+  if (plan.route_options.length && !plan.route_options.some((route) => route.selected)) {
+    plan.route_options[0].selected = true;
+  }
+}
+
+function selectRoute(mode) {
+  const route = currentPlan.route_options.find((item) => item.mode === mode);
+  if (!route) return;
+
+  const travelIndex = currentPlan.schedule.findIndex((item) => item.type === "travel");
+  const travelItem = currentPlan.schedule[travelIndex];
+  const previousDuration = travelItem?.travel_minutes || selectedRoute(currentPlan)?.duration_minutes || route.duration_minutes;
+  const deltaMinutes = route.duration_minutes - previousDuration;
+
+  currentPlan.route_options.forEach((item) => {
+    item.selected = item.mode === route.mode;
+  });
+
+  if (travelItem) {
+    travelItem.end_time = addMinutes(travelItem.start_time, route.duration_minutes);
+    travelItem.travel_minutes = route.duration_minutes;
+    travelItem.transport_mode = route.mode;
+    travelItem.reason = routeReason(route.mode);
+    if (deltaMinutes) {
+      currentPlan.schedule.slice(travelIndex + 1).forEach((item) => shiftScheduleItem(item, deltaMinutes));
+      syncPendingActionTimes(currentPlan);
+    }
+  }
+
+  updateRouteRiskNotes(currentPlan, route);
+  updateRouteSummary(currentPlan, route);
+}
+
+function selectedRoute(plan) {
+  return plan.route_options.find((route) => route.selected) || plan.route_options[0];
+}
+
+function selectedRouteMode(plan) {
+  return selectedRoute(plan)?.mode || "";
+}
+
+function shiftScheduleItem(item, minutes) {
+  item.start_time = addMinutes(item.start_time, minutes);
+  item.end_time = addMinutes(item.end_time, minutes);
+}
+
+function syncPendingActionTimes(plan) {
+  const activity = plan.schedule.find((item) => item.type === "activity");
+  const restaurant = plan.schedule.find((item) => item.type === "restaurant");
+  plan.pending_actions.forEach((action) => {
+    if (action.type === "book_activity" && activity) {
+      action.payload.start_time = activity.start_time;
+    }
+    if (action.type === "reserve_restaurant" && restaurant) {
+      action.payload.arrival_time = restaurant.start_time;
+    }
+  });
+}
+
+function updateRouteSummary(plan, route) {
+  const lastSchedule = plan.schedule[plan.schedule.length - 1];
+  const baseSummary = plan.base_summary || plan.summary;
+  const withFinishTime = lastSchedule
+    ? baseSummary.replace(/\d{2}:\d{2}\s*前结束/, `${lastSchedule.end_time} 前结束`)
+    : baseSummary;
+  plan.summary = `${withFinishTime} 当前交通已选择${modeLabel(route.mode)}。`;
+}
+
+function updateRouteRiskNotes(plan, route) {
+  const notes = [...(plan.static_risk_notes || plan.risk_notes.filter((note) => !isRouteRiskNote(note)))];
+  notes.push(routeRiskNote(route));
+  plan.risk_notes = notes.filter(Boolean);
+}
+
+function isRouteRiskNote(note) {
+  return /路况|步行距离|已选择|骑行|公交\/地铁|交通/.test(String(note));
+}
+
+function routeRiskNote(route) {
+  const prefix = `已选择${modeLabel(route.mode)}，预计 ${route.duration_minutes} 分钟、${route.distance_km} km。`;
+  if (route.mode === "driving" || route.mode === "ride_hailing") {
+    return `${prefix}出发前建议复查实时路况和上车/停车位置。`;
+  }
+  if (route.mode === "walking") {
+    return `${prefix}${route.distance_km > 2 ? "距离偏长，儿童或老人同行时建议确认体力。" : "适合近距离慢节奏安排。"}`;
+  }
+  if (route.mode === "cycling") {
+    return `${prefix}骑行前请确认同行者安全装备和道路条件。`;
+  }
+  if (route.mode === "public_transit") {
+    return `${prefix}出发前建议复查实时班次和换乘距离。`;
+  }
+  return prefix;
+}
+
+function renderTimeline(plan) {
+  if (plan.schedule.length) {
+    return plan.schedule.map(renderScheduleItem).join("");
+  }
+  const reasons = plan.risk_notes.length
+    ? plan.risk_notes
+    : [plan.final_message || "当前条件下没有可执行时间轴。"];
+  return `
+    <article class="empty-timeline">
+      <strong>暂未生成可执行时间轴</strong>
+      <p>${escapeHtml(plan.final_message || plan.summary || "需要补充或放宽条件后继续规划。")}</p>
+      <div class="chips">${renderChips(reasons)}</div>
+    </article>
+  `;
 }
 
 function renderSuccess(result) {
@@ -290,13 +508,13 @@ function renderScheduleItem(item, index) {
 
 function renderRouteItem(route) {
   return `
-    <article class="route-item ${route.selected ? "selected" : ""}">
+    <button class="route-item ${route.selected ? "selected" : ""}" type="button" data-route-mode="${escapeHtml(route.mode)}" aria-pressed="${route.selected ? "true" : "false"}">
       <div>
         <strong>${escapeHtml(modeLabel(route.mode))}</strong>
         <span>${route.duration_minutes} 分钟 · ${route.distance_km} km</span>
       </div>
       <em>${route.selected ? "已选" : `${route.estimated_cost} 元`}</em>
-    </article>
+    </button>
   `;
 }
 
@@ -364,6 +582,23 @@ function modeLabel(mode) {
   }[mode] || mode || "-";
 }
 
+function routeReason(mode) {
+  return {
+    walking: "已按你的选择改为步行，适合距离较近、节奏更松的安排。",
+    driving: "已按你的选择改为驾车，适合多人同行和减少步行。",
+    public_transit: "已按你的选择改为公交/地铁，成本更低，适合多人统一出行。",
+    ride_hailing: "已按你的选择改为网约车，减少换乘和停车成本。",
+    cycling: "已按你的选择改为骑行，适合轻量出行并控制成本。",
+  }[mode] || "已按你的选择更新交通方式。";
+}
+
+function addMinutes(timeText, minutes) {
+  const [hour, minute] = String(timeText || "00:00").split(":").map((value) => Number.parseInt(value, 10));
+  const date = new Date(2000, 0, 1, Number.isFinite(hour) ? hour : 0, Number.isFinite(minute) ? minute : 0);
+  date.setMinutes(date.getMinutes() + minutes);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 function typeLabel(type) {
   return {
     travel: "出行",
@@ -382,6 +617,36 @@ function actionTypeLabel(type) {
 
 function actionLabel(type, target) {
   return `${actionTypeLabel(type)}：${target}`;
+}
+
+function parseCompanions(value) {
+  return String(value || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split(/\s+/).filter(Boolean);
+      const [name, relation, ...contactParts] = parts;
+      const contactValue = contactParts.join(" ");
+      return {
+        name: name || "",
+        relation: relation || "同行者",
+        contact_method: inferContactMethod(contactValue),
+        contact_value: contactValue,
+      };
+    })
+    .filter((item) => item.name);
+}
+
+function formatCompanionLine(item) {
+  return [item.name, item.relation, item.contact_value].filter(Boolean).join(" ");
+}
+
+function inferContactMethod(value) {
+  if (!value) return "";
+  if (value.includes("@")) return "email";
+  if (/^[+\d][\d\s-]+$/.test(value)) return "phone";
+  return "wechat";
 }
 
 function buildUserContext() {

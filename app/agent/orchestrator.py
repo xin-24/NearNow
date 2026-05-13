@@ -17,6 +17,7 @@ from app.providers.longcat_client import LongCatAPIError, LongCatClient
 from app.providers.location_provider import OpenStreetMapLocationProvider
 from app.providers.mock_provider import MockLocalLifeProvider
 from app.providers.real_provider import OpenStreetMapLocalLifeProvider
+from app.utils.time_utils import add_minutes
 
 
 class PlanStore:
@@ -93,10 +94,69 @@ class LocalPlannerAgent:
         plan = self.store.get(plan_id)
         if not plan:
             return self._error("PLAN_NOT_FOUND", "找不到这个方案，请重新生成计划。", False)
+        selected_route_mode = payload.get("selected_route_mode")
+        if selected_route_mode and not self._apply_selected_route(plan, str(selected_route_mode)):
+            return self._error("ROUTE_NOT_FOUND", "找不到选择的交通方式，请重新生成方案。", True)
         action_ids = payload.get("confirmed_action_ids")
         provider = self._provider_for_mode(self.store.get_mode(plan_id) or self.default_mode)
         result: ExecutionResult = ExecutionManager(provider).execute(plan, action_ids)
         return {"success": True, "data": result.to_dict(), "error": None}
+
+    def _apply_selected_route(self, plan: Plan, selected_route_mode: str) -> bool:
+        route = next((item for item in plan.route_options if item.mode == selected_route_mode), None)
+        if route is None:
+            return False
+
+        current_route = next((item for item in plan.route_options if item.selected), None)
+        current_duration = current_route.duration_minutes if current_route else route.duration_minutes
+        for item in plan.route_options:
+            item.selected = item.mode == route.mode
+
+        if not plan.schedule:
+            return True
+
+        travel_index = next((index for index, item in enumerate(plan.schedule) if item.type == "travel"), None)
+        if travel_index is None:
+            return True
+
+        travel = plan.schedule[travel_index]
+        current_duration = travel.travel_minutes or current_duration
+        delta_minutes = route.duration_minutes - current_duration
+
+        travel.end_time = add_minutes(travel.start_time, route.duration_minutes)
+        travel.travel_minutes = route.duration_minutes
+        travel.transport_mode = route.mode
+        travel.reason = self._route_reason(route.mode)
+
+        if delta_minutes:
+            for item in plan.schedule[travel_index + 1 :]:
+                item.start_time = add_minutes(item.start_time, delta_minutes)
+                item.end_time = add_minutes(item.end_time, delta_minutes)
+
+        self._sync_pending_action_times(plan)
+        return True
+
+    def _sync_pending_action_times(self, plan: Plan) -> None:
+        activity = next((item for item in plan.schedule if item.type == "activity"), None)
+        restaurant = next((item for item in plan.schedule if item.type == "restaurant"), None)
+        for action in plan.pending_actions:
+            if action.type == "book_activity" and activity:
+                action.payload["start_time"] = activity.start_time
+            if action.type == "reserve_restaurant" and restaurant:
+                action.payload["arrival_time"] = restaurant.start_time
+
+    def _route_reason(self, mode: str) -> str:
+        if mode == "driving":
+            return "已按你的选择改为驾车，适合多人同行和减少步行。"
+        if mode == "ride_hailing":
+            return "已按你的选择改为网约车，减少换乘和停车成本。"
+        if mode == "public_transit":
+            return "已按你的选择改为公交/地铁，成本更低，适合多人统一出行。"
+        if mode == "walking":
+            return "已按你的选择改为步行，适合距离较近、节奏更松的安排。"
+        if mode == "cycling":
+            return "已按你的选择改为骑行，适合轻量出行并控制成本。"
+        return "已按你的选择更新交通方式。"
 
     def _prepare_user_context(self, user_context: dict | None, mode: str) -> dict | None:
         if mode == RunMode.MOCK.value or not isinstance(user_context, dict):

@@ -49,6 +49,7 @@ local-weekend-planner/
 - [开发指南](docs/development_guide.md)：推荐技术栈、目录职责、开发流程、测试策略和里程碑。
 - [AI Agent 竞品与能力借鉴](docs/ai_agent_benchmark.md)：当前相关 Agent 应用调研，以及可复用到本项目的产品能力。
 - [真实服务接入设计](docs/production_integration.md)：真实地理位置、真实店铺、POI、路线和交通方式接入方案。
+- [开发日志](docs/logs/README.md)：按日期归档真实接入、问题处理和效率提升记录。
 - [Demo 脚本](docs/demo_script.md)：演示路径、输入样例、期望输出和异常场景。
 
 ## 最小可交付版本
@@ -101,6 +102,35 @@ python3 -m app.main
 ```
 
 可参考 `.env.example` 查看完整环境变量。当前实现使用官方文档中的 `https://api.longcat.chat/openai/v1/chat/completions` 格式，不额外引入第三方依赖。
+
+## 登录与 MySQL 存储
+
+Web UI 已加入登录页。首次使用同一账号和密码会创建本地账号，后续使用该密码登录。登录后，系统会保存出发位置、生成的计划、同行通知人，以及确认后待发送的通知对象。
+
+默认存储为内存模式，适合本地调试：
+
+```bash
+NEARNOW_STORAGE_BACKEND=memory
+python3 -m app.main
+```
+
+如需写入 MySQL，先创建数据库并安装项目依赖，然后执行 [schema.sql](app/storage/schema.sql) 或开启自动建表：
+
+```bash
+pip install -e .
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS nearnow CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql -u root -p nearnow < app/storage/schema.sql
+
+export NEARNOW_STORAGE_BACKEND=mysql
+export MYSQL_HOST=127.0.0.1
+export MYSQL_PORT=3306
+export MYSQL_DATABASE=nearnow
+export MYSQL_USER=nearnow
+export MYSQL_PASSWORD="你的 MySQL 密码"
+python3 -m app.main
+```
+
+也可以设置 `NEARNOW_MYSQL_AUTO_MIGRATE=true`，服务启动时会尝试自动创建所需表。
 
 环境变量文件建议：
 
