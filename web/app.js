@@ -156,7 +156,7 @@ planBtn.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: goal.value,
-        mode: "mock",
+        mode: "real",
         user_context: userContext,
       }),
     });
@@ -414,11 +414,13 @@ function buildUserContext() {
   return {
     home_location: manualLocation.label,
     city: manualLocation.city,
-    coordinates: { lat: 39.9957, lng: 116.4813 },
     location_permission_granted: false,
     location_source: "manual",
     manual_location_format: manualLocation.format,
     precision: manualLocation.precision,
+    district: manualLocation.district,
+    landmark: manualLocation.landmark,
+    formatted_address: manualLocation.label,
   };
 }
 
@@ -539,13 +541,32 @@ function parseManualLocation(locationValue, cityValue) {
 
   const label = cityName && !inferredCity ? `${cityName} ${location}` : location;
   const areaSignals = /(区|县|市|镇|街道|商圈|园区|广场|中心|SOHO|mall|plaza)/i;
+  const parts = splitManualLocation(label, cityName);
   return {
     valid: true,
     label,
     city: cityName,
+    district: parts.district,
+    landmark: parts.landmark,
     format: "city_district_landmark",
     precision: areaSignals.test(label) ? "manual_area" : "manual_landmark",
   };
+}
+
+function splitManualLocation(label, cityName) {
+  const normalized = normalizeLocationText(label);
+  let rest = normalized;
+  if (cityName && rest.startsWith(`${cityName}市`)) {
+    rest = normalizeLocationText(rest.slice(cityName.length + 1));
+  } else if (cityName && rest.startsWith(cityName)) {
+    rest = normalizeLocationText(rest.slice(cityName.length));
+  }
+
+  const tokens = rest.split(" ").filter(Boolean);
+  const districtIndex = tokens.findIndex((token) => /(区|县|市|镇|街道)$/.test(token));
+  const district = districtIndex >= 0 ? tokens[districtIndex] : "";
+  const landmark = tokens.filter((_, index) => index !== districtIndex).join(" ");
+  return { district, landmark: landmark || rest };
 }
 
 function inferCityFromLocation(value) {

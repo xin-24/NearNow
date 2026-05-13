@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from json import JSONDecodeError
 from math import atan2, cos, radians, sin, sqrt
@@ -21,6 +22,7 @@ class ApproximateAddress:
     precision: str
     confidence: str
     distance_km: float
+    coordinates: Coordinates | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -62,6 +64,7 @@ class MockLocationProvider:
             precision="approximate_area",
             confidence=self._confidence(distance),
             distance_km=round(distance, 2),
+            coordinates=area_coordinates,
         )
 
     def _format_address(self, city: str, district: str, landmark: str) -> str:
@@ -87,7 +90,8 @@ class MockLocationProvider:
 
 class OpenStreetMapLocationProvider:
     provider_name = "osm_nominatim"
-    endpoint = "https://nominatim.openstreetmap.org/reverse"
+    reverse_endpoint = "https://nominatim.openstreetmap.org/reverse"
+    search_endpoint = "https://nominatim.openstreetmap.org/search"
 
     def reverse_geocode(self, coordinates: Coordinates) -> ApproximateAddress:
         params = urlencode(
@@ -101,7 +105,7 @@ class OpenStreetMapLocationProvider:
             }
         )
         request = Request(
-            f"{self.endpoint}?{params}",
+            f"{self.reverse_endpoint}?{params}",
             headers={
                 "Accept": "application/json",
                 "User-Agent": "NearNowLocalPlanner/0.1",
@@ -113,12 +117,142 @@ class OpenStreetMapLocationProvider:
         except (HTTPError, URLError, TimeoutError, JSONDecodeError, OSError) as exc:
             raise RuntimeError("reverse geocode failed") from exc
 
-        address = self.from_nominatim_payload(payload)
+        address = self.from_nominatim_payload(payload, coordinates)
         if not address.formatted_address:
             raise RuntimeError("reverse geocode returned an empty address")
         return address
 
-    def from_nominatim_payload(self, payload: dict) -> ApproximateAddress:
+    def geocode(
+        self,
+        query: str,
+        city: str | None = None,
+        district: str | None = None,
+        landmark: str | None = None,
+    ) -> ApproximateAddress:
+        payload: list[dict] = []
+        for params in self._geocode_candidate_params(query, city, district, landmark):
+            candidate_payload = self._search(params)
+            if not candidate_payload:
+                continue
+            if self._geocode_result_is_confident(candidate_payload[0], city, district, landmark):
+                payload = candidate_payload
+                break
+
+        if not payload:
+            raise RuntimeError("geocode returned no confident results")
+        try:
+            coordinates = Coordinates(lat=float(payload[0]["lat"]), lng=float(payload[0]["lon"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("geocode returned invalid coordinates") from exc
+
+        address = self.from_nominatim_payload(payload[0], coordinates)
+        if not address.formatted_address:
+            address.formatted_address = self._format_address(address.city, address.district, address.landmark)
+        return address
+
+    def _geocode_candidate_params(
+        self,
+        query: str,
+        city: str | None = None,
+        district: str | None = None,
+        landmark: str | None = None,
+    ) -> list[dict[str, str | int]]:
+        query = self._clean_value(query)
+        city = self._clean_value(city)
+        district = self._clean_value(district)
+        landmark = self._clean_value(landmark)
+
+        candidates: list[dict[str, str | int]] = []
+
+        def add(params: dict[str, str | int]) -> None:
+            key = tuple(sorted((item_key, str(item_value)) for item_key, item_value in params.items()))
+            if key not in seen:
+                seen.add(key)
+                candidates.append(params)
+
+        seen: set[tuple[tuple[str, str], ...]] = set()
+        if query:
+            add({"q": query})
+            if "中国" not in query and "China" not in query:
+                add({"q": f"{query} 中国"})
+        if city or district or landmark:
+            ordered = " ".join(part for part in (landmark, district, city, "中国") if part)
+            if ordered:
+                add({"q": ordered})
+            structured = {
+                "country": "中国",
+                "city": city,
+                "county": district,
+                "street": landmark,
+            }
+            add({key: value for key, value in structured.items() if value})
+            broader = " ".join(part for part in (district, city, "中国") if part)
+            if broader:
+                add({"q": broader})
+        return candidates
+
+    def _search(self, params: dict[str, str | int]) -> list[dict]:
+        encoded = urlencode(
+            {
+                "format": "jsonv2",
+                "limit": 1,
+                "addressdetails": 1,
+                "accept-language": "zh-CN,zh,en",
+                **params,
+            }
+        )
+        request = Request(
+            f"{self.search_endpoint}?{encoded}",
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "NearNowLocalPlanner/0.1",
+            },
+        )
+        try:
+            with urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, JSONDecodeError, OSError) as exc:
+            raise RuntimeError("geocode failed") from exc
+        if not isinstance(payload, list):
+            raise RuntimeError("geocode returned invalid payload")
+        return payload
+
+    def _geocode_result_is_confident(
+        self,
+        payload: dict,
+        city: str | None = None,
+        district: str | None = None,
+        landmark: str | None = None,
+    ) -> bool:
+        city = self._clean_value(city)
+        district = self._clean_value(district)
+        landmark = self._clean_value(landmark)
+        text = self._payload_text(payload)
+
+        if landmark:
+            return self._landmark_matches(text, landmark)
+        if district:
+            return district in text
+        if city:
+            return city in text or f"{city}市" in text
+        return bool(text)
+
+    def _landmark_matches(self, text: str, landmark: str) -> bool:
+        cjk_tokens = re.findall(r"[\u4e00-\u9fff]{2,}", landmark)
+        if cjk_tokens:
+            return any(token in text for token in cjk_tokens)
+        tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9]{2,}", landmark)]
+        lower_text = text.lower()
+        return any(token in lower_text for token in tokens)
+
+    def _payload_text(self, payload: dict) -> str:
+        values = [payload.get("display_name"), payload.get("name")]
+        address = payload.get("address") or {}
+        if isinstance(address, dict):
+            values.extend(address.values())
+        return " ".join(self._clean_value(value) for value in values if value)
+
+    def from_nominatim_payload(self, payload: dict, coordinates: Coordinates | None = None) -> ApproximateAddress:
         raw_address = payload.get("address") or {}
         city = self._first(
             raw_address,
@@ -162,6 +296,7 @@ class OpenStreetMapLocationProvider:
             precision="approximate_area",
             confidence=self._confidence(city, district, landmark),
             distance_km=0.0,
+            coordinates=coordinates,
         )
 
     def _format_address(self, city: str, district: str, landmark: str) -> str:
@@ -195,4 +330,3 @@ class OpenStreetMapLocationProvider:
         if filled == 2:
             return "medium"
         return "low"
-

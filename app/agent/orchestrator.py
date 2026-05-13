@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from app.agent.context_builder import ContextBuilder, PlanningContext
 from app.agent.executor import ExecutionManager
 from app.agent.intent_parser import IntentParser
@@ -8,25 +10,38 @@ from app.agent.longcat_response_generator import LongCatResponseGenerator
 from app.agent.participant_constraints import ParticipantConstraintBuilder
 from app.agent.planner import PlanningEngine
 from app.agent.response_generator import ResponseGenerator
+from app.domain.enums import RunMode
 from app.domain.models import ExecutionResult, Plan
+from app.providers.base import LocalLifeProvider, ProviderAPIError
 from app.providers.longcat_client import LongCatAPIError, LongCatClient
+from app.providers.location_provider import OpenStreetMapLocationProvider
 from app.providers.mock_provider import MockLocalLifeProvider
+from app.providers.real_provider import OpenStreetMapLocalLifeProvider
 
 
 class PlanStore:
     def __init__(self) -> None:
         self._plans: dict[str, Plan] = {}
+        self._modes: dict[str, str] = {}
 
-    def save(self, plan: Plan) -> None:
+    def save(self, plan: Plan, mode: str) -> None:
         self._plans[plan.plan_id] = plan
+        self._modes[plan.plan_id] = mode
 
     def get(self, plan_id: str) -> Plan | None:
         return self._plans.get(plan_id)
 
+    def get_mode(self, plan_id: str) -> str | None:
+        return self._modes.get(plan_id)
+
 
 class LocalPlannerAgent:
-    def __init__(self, llm_client: LongCatClient | None = None) -> None:
-        self.provider = MockLocalLifeProvider()
+    def __init__(self, llm_client: LongCatClient | None = None, default_mode: str | None = None) -> None:
+        self.default_mode = default_mode or os.getenv("NEARNOW_PROVIDER_MODE", RunMode.REAL.value)
+        self.mock_provider = MockLocalLifeProvider()
+        self.real_provider = OpenStreetMapLocalLifeProvider()
+        self.location_provider = OpenStreetMapLocationProvider()
+        self.provider = self._provider_for_mode(self.default_mode)
         self.llm_client = llm_client or LongCatClient.from_env()
         fallback_parser = IntentParser()
         fallback_response_generator = ResponseGenerator()
@@ -42,6 +57,7 @@ class LocalPlannerAgent:
         message = payload.get("message", "").strip()
         if not message:
             return self._error("EMPTY_MESSAGE", "请输入一句活动目标。", True)
+        mode = self._normalize_mode(payload.get("mode"))
 
         try:
             intent = self.parser.parse(message, payload.get("participants"))
@@ -49,17 +65,27 @@ class LocalPlannerAgent:
             return self._longcat_error(exc)
 
         intent = self.constraint_builder.normalize(intent)
-        context = self.context_builder.build(intent, payload.get("user_context"))
+        user_context_payload = self._prepare_user_context(payload.get("user_context"), mode)
+        if isinstance(user_context_payload, dict) and "error" in user_context_payload:
+            return user_context_payload["error"]
+
+        context = self.context_builder.build(intent, user_context_payload)
         if isinstance(context, dict):
             return self._error(context["code"], context["message"], context["recoverable"])
 
-        plan = self.planner.generate_plan(context)
+        provider = self._provider_for_mode(mode)
+        planner = PlanningEngine(provider)
+        try:
+            plan = planner.generate_plan(context)
+        except ProviderAPIError as exc:
+            return self._provider_error(exc)
+
         try:
             plan.final_message = self.response_generator.summarize_plan(plan)
         except LongCatAPIError as exc:
             return self._longcat_error(exc)
 
-        self.store.save(plan)
+        self.store.save(plan, mode)
         return {"success": True, "data": plan.to_dict(), "error": None}
 
     def confirm(self, payload: dict) -> dict:
@@ -68,8 +94,61 @@ class LocalPlannerAgent:
         if not plan:
             return self._error("PLAN_NOT_FOUND", "找不到这个方案，请重新生成计划。", False)
         action_ids = payload.get("confirmed_action_ids")
-        result: ExecutionResult = self.executor.execute(plan, action_ids)
+        provider = self._provider_for_mode(self.store.get_mode(plan_id) or self.default_mode)
+        result: ExecutionResult = ExecutionManager(provider).execute(plan, action_ids)
         return {"success": True, "data": result.to_dict(), "error": None}
+
+    def _prepare_user_context(self, user_context: dict | None, mode: str) -> dict | None:
+        if mode == RunMode.MOCK.value or not isinstance(user_context, dict):
+            return user_context
+        if user_context.get("location_source") != "manual" or not user_context.get("home_location"):
+            return user_context
+
+        enriched = dict(user_context)
+        try:
+            address = self.location_provider.geocode(
+                str(user_context["home_location"]),
+                city=user_context.get("city"),
+                district=user_context.get("district"),
+                landmark=user_context.get("landmark"),
+            )
+        except RuntimeError:
+            return {
+                "error": self._error(
+                    "GEOCODE_FAILED",
+                    "手动位置无法完成真实地理编码，请补充城市、区县和商圈/地标后重试。",
+                    True,
+                )
+            }
+        if address.coordinates is None:
+            return {
+                "error": self._error(
+                    "GEOCODE_FAILED",
+                    "手动位置没有返回可用坐标，请换一个更明确的城市、区县和地标。",
+                    True,
+                )
+            }
+
+        enriched["coordinates"] = {"lat": address.coordinates.lat, "lng": address.coordinates.lng}
+        enriched["home_location"] = address.formatted_address or enriched["home_location"]
+        enriched["city"] = address.city or enriched.get("city")
+        enriched["district"] = address.district
+        enriched["landmark"] = address.landmark
+        enriched["formatted_address"] = address.formatted_address
+        enriched["address_source"] = address.source
+        enriched["address_confidence"] = address.confidence
+        return enriched
+
+    def _normalize_mode(self, raw_mode: object | None) -> str:
+        mode = str(raw_mode or self.default_mode).strip().lower()
+        if mode == RunMode.MOCK.value:
+            return RunMode.MOCK.value
+        return RunMode.REAL.value
+
+    def _provider_for_mode(self, mode: str) -> LocalLifeProvider:
+        if mode == RunMode.MOCK.value:
+            return self.mock_provider
+        return self.real_provider
 
     def _error(self, code: str, message: str, recoverable: bool) -> dict:
         return {
@@ -89,5 +168,12 @@ class LocalPlannerAgent:
         return self._error(
             "LONGCAT_API_ERROR",
             "LongCat API 调用失败，请稍后重试或检查模型服务配置。",
+            True,
+        )
+
+    def _provider_error(self, error: ProviderAPIError) -> dict:
+        return self._error(
+            "REAL_PROVIDER_ERROR",
+            str(error) or "真实位置、店铺或路线服务调用失败。",
             True,
         )

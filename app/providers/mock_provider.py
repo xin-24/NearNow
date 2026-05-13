@@ -165,14 +165,26 @@ class MockLocalLifeProvider:
             ),
         ]
 
-    def search_activities(self, tags: list[str], party_size: int, radius_km: float) -> list[Activity]:
+    def search_activities(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Activity]:
         return [
             item
             for item in self.activities
             if item.capacity_left >= party_size and item.distance_km <= radius_km
         ]
 
-    def search_restaurants(self, tags: list[str], party_size: int, radius_km: float) -> list[Restaurant]:
+    def search_restaurants(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Restaurant]:
         return [
             item
             for item in self.restaurants

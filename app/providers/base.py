@@ -5,11 +5,27 @@ from typing import Protocol
 from app.domain.models import Activity, Coordinates, Restaurant, RouteOption
 
 
+class ProviderAPIError(RuntimeError):
+    """Raised when a real provider call fails and the agent should not fall back."""
+
+
 class LocalLifeProvider(Protocol):
-    def search_activities(self, tags: list[str], party_size: int, radius_km: float) -> list[Activity]:
+    def search_activities(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Activity]:
         ...
 
-    def search_restaurants(self, tags: list[str], party_size: int, radius_km: float) -> list[Restaurant]:
+    def search_restaurants(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Restaurant]:
         ...
 
     def calculate_routes(
@@ -30,4 +46,3 @@ class LocalLifeProvider(Protocol):
 
     def send_notification(self, payload: dict) -> dict:
         ...
-

@@ -11,7 +11,9 @@ from app.agent.orchestrator import LocalPlannerAgent
 from app.agent.response_generator import ResponseGenerator
 from app.domain.models import Coordinates, PlanningIntent, to_plain
 from app.providers.longcat_client import LongCatAPIError, LongCatClient, LongCatConfig, load_env_file
-from app.providers.location_provider import MockLocationProvider, OpenStreetMapLocationProvider
+from app.providers.location_provider import ApproximateAddress, MockLocationProvider, OpenStreetMapLocationProvider
+from app.providers.mock_provider import MockLocalLifeProvider
+from app.providers.real_provider import OpenStreetMapLocalLifeProvider
 
 
 USER_CONTEXT = {
@@ -68,6 +70,100 @@ class LocationProviderTest(unittest.TestCase):
         self.assertEqual("Manhattan", address.district)
         self.assertEqual("Financial District", address.landmark)
         self.assertEqual("New York Manhattan Financial District", address.formatted_address)
+
+    def test_geocode_candidates_include_structured_manual_address(self) -> None:
+        candidates = OpenStreetMapLocationProvider()._geocode_candidate_params(
+            "北京 朝阳区 望京 SOHO",
+            city="北京",
+            district="朝阳区",
+            landmark="望京 SOHO",
+        )
+        self.assertIn({"q": "北京 朝阳区 望京 SOHO"}, candidates)
+        self.assertIn(
+            {"country": "中国", "city": "北京", "county": "朝阳区", "street": "望京 SOHO"},
+            candidates,
+        )
+
+    def test_geocode_confidence_requires_landmark_match(self) -> None:
+        provider = OpenStreetMapLocationProvider()
+        self.assertTrue(
+            provider._geocode_result_is_confident(
+                {"display_name": "小望京, 望京街道, 朝阳区, 北京"},
+                city="北京",
+                district="朝阳区",
+                landmark="小望京",
+            )
+        )
+        self.assertFalse(
+            provider._geocode_result_is_confident(
+                {"display_name": "北京商务中心区, 呼家楼街道, 朝阳区, 北京"},
+                city="北京",
+                district="朝阳区",
+                landmark="望京 SOHO",
+            )
+        )
+
+
+class RealLocalLifeProviderTest(unittest.TestCase):
+    def test_overpass_payload_builds_activity_and_restaurant_models(self) -> None:
+        provider = OpenStreetMapLocalLifeProvider(max_results=5)
+        origin = Coordinates(39.9957, 116.4813)
+
+        activities = provider.from_overpass_activities_payload(
+            {
+                "elements": [
+                    {
+                        "type": "node",
+                        "id": 1,
+                        "lat": 39.991,
+                        "lon": 116.476,
+                        "tags": {"name": "望湖公园", "leisure": "park", "dog": "yes"},
+                    }
+                ]
+            },
+            ["pet", "pet_friendly"],
+            2,
+            origin,
+        )
+        self.assertEqual("望湖公园", activities[0].name)
+        self.assertEqual("osm_overpass", activities[0].provider)
+        self.assertFalse(activities[0].reservation_required)
+        self.assertIn("pet_friendly", activities[0].tags)
+
+        restaurants = provider.from_overpass_restaurants_payload(
+            {
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 2,
+                        "center": {"lat": 39.992, "lon": 116.477},
+                        "tags": {
+                            "name": "松木咖啡",
+                            "amenity": "cafe",
+                            "cuisine": "coffee;vegetarian",
+                            "dogs": "yes",
+                        },
+                    }
+                ]
+            },
+            ["bestie"],
+            2,
+            origin,
+        )
+        self.assertEqual("松木咖啡", restaurants[0].name)
+        self.assertIn("low_calorie", restaurants[0].tags)
+        self.assertIn("pet_friendly", restaurants[0].tags)
+
+    def test_osrm_payload_builds_route_option(self) -> None:
+        route = OpenStreetMapLocalLifeProvider().from_osrm_payload(
+            {"code": "Ok", "routes": [{"distance": 3200, "duration": 720}]},
+            "出发地",
+            "目的地",
+            "driving",
+        )
+        self.assertEqual(12, route.duration_minutes)
+        self.assertEqual(3.2, route.distance_km)
+        self.assertEqual("driving", route.mode)
 
 
 class LongCatIntegrationTest(unittest.TestCase):
@@ -155,7 +251,7 @@ class LongCatIntegrationTest(unittest.TestCase):
                 "15:00 出发，先活动再吃饭，确认后我来预约。",
             ]
         )
-        agent = LocalPlannerAgent(llm_client=client)
+        agent = LocalPlannerAgent(llm_client=client, default_mode="mock")
         planned = agent.plan({"message": "下午和恋人约会，想有点仪式感。", "user_context": USER_CONTEXT})
         self.assertTrue(planned["success"], planned)
         self.assertEqual("15:00 出发，先活动再吃饭，确认后我来预约。", planned["data"]["final_message"])
@@ -211,6 +307,27 @@ class RaisingLongCatClient:
         raise LongCatAPIError("boom")
 
 
+class StubGeocoder:
+    def geocode(
+        self,
+        query: str,
+        city: str | None = None,
+        district: str | None = None,
+        landmark: str | None = None,
+    ) -> ApproximateAddress:
+        return ApproximateAddress(
+            city="上海",
+            district="徐汇区",
+            landmark="徐家汇",
+            formatted_address="上海 徐汇区 徐家汇",
+            source="osm_nominatim",
+            precision="approximate_area",
+            confidence="high",
+            distance_km=0,
+            coordinates=Coordinates(31.191, 121.4375),
+        )
+
+
 def to_intent_payload(intent: PlanningIntent) -> dict:
     return {
         "start_time": intent.start_time,
@@ -223,7 +340,7 @@ def to_intent_payload(intent: PlanningIntent) -> dict:
 
 
 def test_agent() -> LocalPlannerAgent:
-    return LocalPlannerAgent(llm_client=RuleBackedLongCatClient())
+    return LocalPlannerAgent(llm_client=RuleBackedLongCatClient(), default_mode="mock")
 
 
 class IntentParserTest(unittest.TestCase):
@@ -329,6 +446,27 @@ class LocalPlannerAgentTest(unittest.TestCase):
         self.assertTrue(response["success"], response)
         first_stop = response["data"]["schedule"][0]
         self.assertIn("北京 朝阳区 望京 SOHO", first_stop["name"])
+
+    def test_real_mode_geocodes_manual_location_before_planning(self) -> None:
+        agent = LocalPlannerAgent(llm_client=RuleBackedLongCatClient(), default_mode="real")
+        agent.real_provider = MockLocalLifeProvider()
+        agent.location_provider = StubGeocoder()
+        response = agent.plan(
+            {
+                "message": "下午和朋友附近吃饭，再找个地方逛逛。",
+                "mode": "real",
+                "user_context": {
+                    "home_location": "上海 徐汇区 徐家汇",
+                    "city": "上海",
+                    "location_source": "manual",
+                    "manual_location_format": "city_district_landmark",
+                    "precision": "manual_area",
+                },
+            }
+        )
+        self.assertTrue(response["success"], response)
+        first_stop = response["data"]["schedule"][0]
+        self.assertIn("上海 徐汇区 徐家汇", first_stop["name"])
 
 
 if __name__ == "__main__":

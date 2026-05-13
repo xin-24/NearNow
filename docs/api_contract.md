@@ -574,10 +574,12 @@ POST /api/mock/routes/calculate
 | `MOCK_API_ERROR` | Mock API 调用失败 | 是 |
 | `LOCATION_PERMISSION_DENIED` | 用户拒绝定位授权 | 是 |
 | `GEOCODING_FAILED` | 地址解析失败 | 是 |
+| `GEOCODE_FAILED` | 手动位置真实地理编码失败 | 是 |
 | `REVERSE_GEOCODE_FAILED` | 真实地址反查 API 调用失败 | 是 |
 | `LONGCAT_API_NOT_CONFIGURED` | LongCat API Key 未配置 | 是 |
 | `LONGCAT_API_ERROR` | LongCat API 调用失败 | 是 |
 | `REAL_PROVIDER_TIMEOUT` | 真实 Provider 超时 | 是 |
+| `REAL_PROVIDER_ERROR` | 真实 POI、餐厅或路线 Provider 调用失败 | 是 |
 | `ROUTE_NOT_FOUND` | 指定交通方式不可达 | 是 |
 | `REAL_PLACE_REQUIRED` | 真实模式下缺少真实 POI 或店铺 | 否 |
 

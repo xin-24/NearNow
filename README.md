@@ -2,7 +2,7 @@
 
 本项目是一个“本地短时活动规划与执行 Agent”。用户输入一句自然语言目标后，系统需要理解出行时间、参与者画像、同行关系、距离偏好、餐饮需求、真实地理位置和交通方式等信息，并生成一条可执行的下午活动方案。在用户确认后，Agent 自动调用工具完成预约、订座、排队、通知等关键动作。
 
-项目采用两阶段实现：第一阶段使用 Mock Provider 完成可运行 Demo，第二阶段接入真实地图、真实 POI、真实店铺名称、实时营业状态、可选交通方式和真实预约能力。
+项目采用 Provider 分层实现：Mock Provider 用于测试和离线开发；Web UI 当前默认使用真实模式，已接入 OpenStreetMap Nominatim 地理编码/逆地理编码、Overpass 周边 POI/餐厅搜索、OSRM 路线耗时。营业状态、评分、人均、实时可订和真实预约动作仍保留在后续 Provider 接入阶段。
 
 ## 项目目标
 
@@ -79,7 +79,7 @@ http://127.0.0.1:8000
 
 网页中点击出发位置输入框内的“定位”按钮可调用浏览器定位授权。前端会先把经纬度降为约 1km 级别的大概位置，再调用后端地址反查接口，将地址按「城市 + 区/县 + 商圈/地标」填回同一个输入框；定位后的地址仍可直接手动修改。地址反查使用真实地图服务，失败时返回错误并提示手动输入，不使用 Mock 地址。界面和方案不会展示精确坐标。若拒绝授权，则继续按手动输入的出发地规划。
 
-手动输入出发地建议使用「城市 + 区/县 + 商圈/地标」格式，例如 `北京 朝阳区 望京 SOHO`、`上海 徐汇区 徐家汇`。如果只填写 `望京 SOHO`，网页会按默认城市归一为 `北京 望京 SOHO`；不需要填写门牌号或精确住址。
+手动输入出发地建议使用「城市 + 区/县 + 商圈/地标」格式，例如 `北京 朝阳区 望京 SOHO`、`上海 徐汇区 徐家汇`。真实模式下，后端会先用 Nominatim 将手动地址解析为大概坐标，再用 Overpass 查询周边真实活动地点和真实餐厅名称，并用 OSRM 计算可用交通方式的路线耗时。如果真实地理编码、POI 或路线 API 失败，接口会直接返回错误，不会使用 Mock 店名或模拟路线假装成功。
 
 ## LongCat API
 
@@ -88,14 +88,15 @@ http://127.0.0.1:8000
 ```bash
 export LONGCAT_API_KEY="你的 LongCat API Key"
 export LONGCAT_MODEL="LongCat-Flash-Chat"
+export NEARNOW_PROVIDER_MODE="real"
 python3 -m app.main
 ```
 
-也可以使用本地 `.env` 文件：
+也可以使用本地 `.env.local` 文件：
 
 ```bash
-cp .env.local.example .env
-# 编辑 .env，填入真实 LONGCAT_API_KEY
+cp .env.local.example .env.local
+# 编辑 .env.local，填入真实 LONGCAT_API_KEY
 python3 -m app.main
 ```
 
@@ -104,8 +105,8 @@ python3 -m app.main
 环境变量文件建议：
 
 - `.env.example`：GitHub 可上传的安全占位模板。
-- `.env.local.example`：本地真实 Key 模板，复制为 `.env` 后填写真实 `LONGCAT_API_KEY`。
-- `.env`：本地私密配置，已被 `.gitignore` 忽略，不要提交。
+- `.env.local.example`：本地真实 Key 模板，复制为 `.env.local` 后填写真实 `LONGCAT_API_KEY`。
+- `.env` / `.env.local`：本地私密配置，已被 `.gitignore` 忽略，不要提交。
 
 命令行试用：
 

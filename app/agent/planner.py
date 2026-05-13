@@ -14,14 +14,30 @@ from app.utils.ids import next_action_id, next_plan_id
 from app.utils.time_utils import add_minutes
 
 
+MAX_ROUTE_ACTIVITY_CANDIDATES = 6
+MAX_RESTAURANT_CANDIDATES = 12
+
+
 class PlanningEngine:
     def __init__(self, provider: LocalLifeProvider) -> None:
         self.provider = provider
 
     def generate_plan(self, context: PlanningContext) -> Plan:
         intent = context.intent
-        activities = self.provider.search_activities(intent.scenario_tags, intent.party_size, intent.radius_km)
-        restaurants = self.provider.search_restaurants(intent.scenario_tags, intent.party_size, intent.radius_km)
+        activities = self.provider.search_activities(
+            intent.scenario_tags,
+            intent.party_size,
+            intent.radius_km,
+            context.origin_coordinates,
+        )
+        restaurants = self.provider.search_restaurants(
+            intent.scenario_tags,
+            intent.party_size,
+            intent.radius_km,
+            context.origin_coordinates,
+        )
+        activities = self._rank_activity_candidates(activities, context)[:MAX_ROUTE_ACTIVITY_CANDIDATES]
+        restaurants = self._rank_restaurant_candidates(restaurants, context)[:MAX_RESTAURANT_CANDIDATES]
 
         candidates = []
         modes = self._allowed_transport_modes(intent.scenario_tags)
@@ -35,6 +51,8 @@ class PlanningEngine:
                 activity.coordinates,
                 modes,
             )
+            if not routes:
+                continue
             selected_route = self._select_route(routes, context)
             for restaurant in restaurants:
                 if not self._satisfies_restaurant_hard_constraints(restaurant, context):
@@ -237,6 +255,26 @@ class PlanningEngine:
         price_score = 8 if "budget_control" not in target or restaurant.average_price <= 150 else 2
         return len(tags & target) * 10 + wait_score + price_score
 
+    def _rank_activity_candidates(self, activities: list[Activity], context: PlanningContext) -> list[Activity]:
+        return sorted(
+            activities,
+            key=lambda activity: (
+                not self._satisfies_activity_hard_constraints(activity, context),
+                -self._activity_score(activity, context),
+                activity.distance_km,
+            ),
+        )
+
+    def _rank_restaurant_candidates(self, restaurants: list[Restaurant], context: PlanningContext) -> list[Restaurant]:
+        return sorted(
+            restaurants,
+            key=lambda restaurant: (
+                not self._satisfies_restaurant_hard_constraints(restaurant, context),
+                -self._restaurant_score(restaurant, context),
+                restaurant.distance_km,
+            ),
+        )
+
     def _route_score(self, route: RouteOption, context: PlanningContext) -> float:
         relations = {participant.relation for participant in context.intent.participants}
         score = route.comfort_score * 20 - route.duration_minutes / 5
@@ -302,9 +340,13 @@ class PlanningEngine:
         return "该交通方式在时间和成本之间较平衡。"
 
     def _activity_reason(self, activity: Activity, context: PlanningContext) -> str:
+        if activity.provider == "osm_overpass":
+            return f"来自真实地图 POI，匹配 {self._scenario_text(context)}；营业状态、容量和是否需要预约需出发前确认。"
         return f"匹配 {self._scenario_text(context)}，并且当前剩余名额可覆盖 {context.intent.party_size} 人。"
 
     def _restaurant_reason(self, restaurant: Restaurant, context: PlanningContext) -> str:
+        if restaurant.provider == "osm_overpass":
+            return f"来自真实地图 POI，可作为 {context.intent.party_size} 人用餐候选；实时营业、等位和可订状态需到店前确认。"
         return f"可容纳 {context.intent.party_size} 人，等待约 {restaurant.wait_minutes} 分钟，标签匹配当前餐饮和同行者约束。"
 
     def _extension_for(self, context: PlanningContext, activity: Activity) -> dict[str, str]:
@@ -327,6 +369,8 @@ class PlanningEngine:
             notes.append("驾车可能受实时路况影响，出发前建议复查路线。")
         if restaurant.wait_minutes:
             notes.append(f"{restaurant.name} 可能需要等待约 {restaurant.wait_minutes} 分钟。")
+        if restaurant.provider == "osm_overpass":
+            notes.append("餐厅来自真实地图 POI；当前未接入实时营业、评分、人均和订座状态，需要出发前复查。")
         if "pet" in context.intent.scenario_tags:
             notes.append("携宠出行需要到店前再次确认宠物入内规则。")
         return notes
@@ -341,4 +385,3 @@ class PlanningEngine:
                 }
             )
         return result
-

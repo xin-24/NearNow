@@ -44,7 +44,15 @@ Provider Layer 需要支持三种模式：
 | --- | --- |
 | `mock` | 本地 Demo、单元测试、离线开发 |
 | `real` | 接入真实服务，输出真实地点和真实店铺 |
-| `hybrid` | 优先真实服务，失败时使用缓存或 Mock 降级 |
+| `hybrid` | 后续规划模式；当前真实链路失败时直接返回错误，不回落到 Mock |
+
+当前代码状态：
+
+- `real` 模式默认用于 Web UI。
+- Geo Provider：OpenStreetMap Nominatim，支持浏览器粗定位后的逆地理编码，以及手动地址的地理编码。
+- POI / 餐厅 Provider：Overpass API，返回真实地点名称、地址片段、经纬度、OSM Provider ID 和可推断标签。
+- Route Provider：OSRM Route Service，返回真实路线距离和耗时；不支持的交通方式会跳过，若没有任何可用路线则返回错误。
+- Booking / Availability Provider：尚未接入真实商家余位、评分、人均、可订状态；当前真实模式不会伪造这些数据，也不会自动完成真实预约。
 
 ## 3. 真实定位设计
 
@@ -72,7 +80,7 @@ Provider Layer 需要支持三种模式：
 }
 ```
 
-浏览器定位只能直接给出经纬度，不能直接给出街区或商圈名称。前端拿到粗化后的坐标后，需要调用 `reverse_geocode` Provider，把坐标转换为「城市 + 区/县 + 商圈/地标」格式，再填回出发地输入框。当前实现使用 OpenStreetMap Nominatim 反查真实地址，失败时返回可恢复错误并提示手动输入，不回落到 Mock 地址；生产模式可替换为高德、Google Maps、Apple MapKit 或内部 Geo 服务。
+浏览器定位只能直接给出经纬度，不能直接给出街区或商圈名称。前端拿到粗化后的坐标后，需要调用 `reverse_geocode` Provider，把坐标转换为「城市 + 区/县 + 商圈/地标」格式，再填回出发地输入框。当前实现使用 OpenStreetMap Nominatim 反查真实地址，失败时返回可恢复错误并提示手动输入，不回落到 Mock 地址。用户手动输入地址时，真实模式会先执行地理编码再规划；地理编码失败时直接要求补充更具体地址。
 
 ### 3.3 定位失败处理
 
@@ -80,6 +88,7 @@ Provider Layer 需要支持三种模式：
 - 地址过于模糊：追问区、商圈或地标。
 - 地理编码失败：提示换一种更具体的地址。
 - Provider 超时：使用最近一次位置缓存，但需要向用户说明。
+- 当前实现尚未启用位置缓存；Provider 失败时直接返回可恢复错误。
 
 ## 4. 真实店铺和活动地点设计
 
@@ -91,6 +100,8 @@ Provider Layer 需要支持三种模式：
 - 本地生活服务：适合餐厅、人均、评分、团购、排队、可订状态。
 - 预约平台：适合活动票、场馆预约、餐厅订座。
 - 自有业务数据：适合补充商家标签和活动规则。
+
+当前实现先使用 Overpass API 查询 OSM POI。它适合拿到真实地点名称、粗地址、经纬度和基础标签，但通常不包含餐厅评分、人均价格、实时营业状态和可订状态。因此这些字段不能由模型补造，后续需要接入高德/Google/Yelp/美团等 Merchant Provider。
 
 ### 4.2 标准地点模型
 
@@ -230,8 +241,8 @@ Planning Engine 不直接搜索地点，而是通过 Tool Router 调用 Provider
 降级策略：
 
 - Geo Provider 失败：要求用户输入更具体地址。
-- POI Provider 失败：切换备选 Provider 或返回无法规划。
-- Route Provider 失败：只展示地点候选，不执行最终规划。
+- POI Provider 失败：返回无法规划，不使用 Mock 店名兜底。
+- Route Provider 失败：返回无法规划，不使用模拟路线兜底。
 - Merchant Availability 失败：标记“需到店确认”，降低方案评分。
 
 ## 8. 安全与合规
@@ -251,4 +262,4 @@ Planning Engine 不直接搜索地点，而是通过 Tool Router 调用 Provider
 - 至少支持两种交通方式比较。
 - 输出中明确选择交通方式的原因。
 - 用户确认前不执行真实预约或排队。
-- 真实 Provider 失败时返回可恢复错误或降级方案。
+- 真实 Provider 失败时返回可恢复错误；只有接入明确标记的数据缓存后，才能启用非 Mock 降级方案。
