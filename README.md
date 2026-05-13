@@ -1,151 +1,138 @@
-# Local Weekend Planner Agent
+# NearNow 邻刻计划
 
-本项目是一个“本地短时活动规划与执行 Agent”。用户输入一句自然语言目标后，系统需要理解出行时间、参与者画像、同行关系、距离偏好、餐饮需求、真实地理位置和交通方式等信息，并生成一条可执行的下午活动方案。在用户确认后，Agent 自动调用工具完成预约、订座、排队、通知等关键动作。
+本地短时活动规划与执行 Agent。用户输入一句自然语言目标后，系统理解出行时间、参与者画像、距离偏好和餐饮需求，生成可执行的活动方案。用户确认后，Agent 自动完成预约、订座和通知。
 
-项目采用 Provider 分层实现：Mock Provider 用于测试和离线开发；Web UI 当前默认使用真实模式，已接入 OpenStreetMap Nominatim 地理编码/逆地理编码、Overpass 周边 POI/餐厅搜索、OSRM 路线耗时。营业状态、评分、人均、实时可订和真实预约动作仍保留在后续 Provider 接入阶段。
-
-## 项目目标
-
-- 接收自然语言目标，自动解析用户意图和约束。
-- 生成下午 4-6 小时内的本地活动、餐饮和后续安排方案。
-- 查询活动、餐厅、余位、排队、距离、路线和交通方式。
-- 支持从 Mock 数据平滑迁移到真实地图和真实门店数据。
-- 在用户确认后执行预约、订座、排队、下单、通知等动作。
-- 提供 CLI 或 Web UI Demo，完整展示 Agent 的规划与执行闭环。
-
-## 推荐项目结构
+## 项目结构
 
 ```text
-local-weekend-planner/
-├── README.md
-├── pyproject.toml
-├── .env.example
-├── docs/
-│   ├── design.md
-│   ├── api_contract.md
-│   ├── development_guide.md
-│   ├── ai_agent_benchmark.md
-│   ├── production_integration.md
-│   └── demo_script.md
-├── app/
-│   ├── main.py
-│   ├── config.py
-│   ├── api/
-│   ├── agent/
-│   ├── domain/
-│   ├── tools/
-│   ├── providers/
-│   ├── mock_api/
-│   └── utils/
-├── cli/
-├── web/
-└── tests/
+nearnow/
+├── app/                        Python 后端
+│   ├── main.py                 HTTP 服务入口
+│   ├── auth.py                 登录/注册/会话
+│   ├── agent/                  Agent 核心编排
+│   │   ├── orchestrator.py     plan() / confirm() 生命周期
+│   │   ├── intent_parser.py    规则意图解析
+│   │   ├── longcat_intent_parser.py  LLM 增强意图解析
+│   │   ├── strategy.py         策略构建（确定性 + LLM）
+│   │   ├── context_builder.py  规划上下文构建
+│   │   ├── planner.py          硬约束过滤 + 软约束评分
+│   │   ├── executor.py         执行管理器
+│   │   ├── response_generator.py     文本方案生成
+│   │   └── longcat_response_generator.py  LLM 增强方案生成
+│   ├── domain/                 数据模型与枚举
+│   ├── providers/              外部服务适配层
+│   │   ├── mock_provider.py    Mock 数据
+│   │   ├── real_provider.py    Overpass + OSRM 真实数据
+│   │   ├── location_provider.py  Nominatim 地理编码
+│   │   └── longcat_client.py   LongCat LLM 客户端
+│   ├── storage/                存储层（内存 / MySQL）
+│   └── utils/                  时间、ID 工具
+├── web/                        React 前端
+│   ├── index.html              Vite 入口
+│   ├── package.json            React 18 + Vite + TypeScript
+│   ├── vite.config.ts          开发代理 :3000 → :8000
+│   └── src/
+│       ├── main.tsx            React 挂载点
+│       ├── App.tsx             视图路由与状态编排
+│       ├── api/                类型定义与 fetch 封装
+│       ├── components/         可复用组件（Header, Timeline, RouteSelector 等）
+│       ├── views/              7 个视图（Login, Input, Analyzing, Proposal, Executing, Success, Error）
+│       ├── hooks/              useAuth, useLocation, useTheme
+│       ├── utils/              标签映射、路线编辑、同伴解析
+│       └── styles/             CSS 变量与 reset
+├── cli/                        命令行入口
+├── tests/                      单元测试
+├── docs/                       设计文档与 API 契约
+├── pyproject.toml              Python 项目配置
+├── .env.example                环境变量模板（安全）
+└── .env.local.example          真实 Key 模板（本地）
 ```
-
-## 文档索引
-
-- [总体设计文档](docs/design.md)：项目背景、业务目标、系统架构、Agent 流程、Planning 策略和异常处理。
-- [API 契约文档](docs/api_contract.md)：Agent API、Mock API、请求响应结构和错误码约定。
-- [开发指南](docs/development_guide.md)：推荐技术栈、目录职责、开发流程、测试策略和里程碑。
-- [AI Agent 竞品与能力借鉴](docs/ai_agent_benchmark.md)：当前相关 Agent 应用调研，以及可复用到本项目的产品能力。
-- [真实服务接入设计](docs/production_integration.md)：真实地理位置、真实店铺、POI、路线和交通方式接入方案。
-- [开发日志](docs/logs/README.md)：按日期归档真实接入、问题处理和效率提升记录。
-- [Demo 脚本](docs/demo_script.md)：演示路径、输入样例、期望输出和异常场景。
-
-## 最小可交付版本
-
-MVP 需要具备以下能力：
-
-- 一个 CLI 或 Web UI 入口。
-- `POST /agent/plan` 生成可执行活动方案。
-- `POST /agent/confirm` 执行用户确认后的预约和通知动作。
-- Mock 活动、餐厅、预约、排队、通知、路线 API。
-- 为真实地理位置、真实店铺名和交通方式选择预留 Provider 抽象。
-- 至少 3 类异常场景：餐厅无位、活动满员、信息不足。
-- 可运行的测试用例覆盖意图解析、规划排序、工具调用和执行结果。
 
 ## 本地运行
 
-当前代码框架不依赖外部 Python 包，可直接启动网页 Demo：
+### 环境要求
+
+- Python 3.11+
+- Node.js 18+
+
+### 快速启动
 
 ```bash
-python3 -m app.main
-```
+# 1. 安装前端依赖
+cd web && npm install && cd ..
 
-打开：
-
-```text
-http://127.0.0.1:8000
-```
-
-网页中点击出发位置输入框内的“定位”按钮可调用浏览器定位授权。前端会先把经纬度降为约 1km 级别的大概位置，再调用后端地址反查接口，将地址按「城市 + 区/县 + 商圈/地标」填回同一个输入框；定位后的地址仍可直接手动修改。地址反查使用真实地图服务，失败时返回错误并提示手动输入，不使用 Mock 地址。界面和方案不会展示精确坐标。若拒绝授权，则继续按手动输入的出发地规划。
-
-手动输入出发地建议使用「城市 + 区/县 + 商圈/地标」格式，例如 `北京 朝阳区 望京 SOHO`、`上海 徐汇区 徐家汇`。真实模式下，后端会先用 Nominatim 将手动地址解析为大概坐标，再用 Overpass 查询周边真实活动地点和真实餐厅名称，并用 OSRM 计算可用交通方式的路线耗时。如果真实地理编码、POI 或路线 API 失败，接口会直接返回错误，不会使用 Mock 店名或模拟路线假装成功。
-
-## LongCat API
-
-项目已接入 LongCat 的 OpenAI 兼容 Chat Completions API。Agent 会使用 LongCat 增强意图解析和最终计划话术；如果未配置 `LONGCAT_API_KEY` 或 API 调用失败，接口会返回错误，不再使用本地规则或 Mock 数据假装成功。
-
-```bash
-export LONGCAT_API_KEY="你的 LongCat API Key"
-export LONGCAT_MODEL="LongCat-Flash-Chat"
-export NEARNOW_PROVIDER_MODE="real"
-python3 -m app.main
-```
-
-也可以使用本地 `.env.local` 文件：
-
-```bash
+# 2. 配置环境变量
 cp .env.local.example .env.local
-# 编辑 .env.local，填入真实 LONGCAT_API_KEY
+# 编辑 .env.local，填入 LONGCAT_API_KEY
+
+# 3. 启动后端
 python3 -m app.main
+
+# 4. 另一个终端，启动前端开发服务器
+cd web && npm run dev
 ```
 
-可参考 `.env.example` 查看完整环境变量。当前实现使用官方文档中的 `https://api.longcat.chat/openai/v1/chat/completions` 格式，不额外引入第三方依赖。
+打开 `http://localhost:3000`，Vite 会自动代理 API 请求到后端 `:8000`。
 
-## 登录与 MySQL 存储
-
-Web UI 已加入登录页。首次使用同一账号和密码会创建本地账号，后续使用该密码登录。登录后，系统会保存出发位置、生成的计划、同行通知人，以及确认后待发送的通知对象。
-
-默认存储为内存模式，适合本地调试：
+### 生产构建
 
 ```bash
-NEARNOW_STORAGE_BACKEND=memory
+cd web && npm run build
 python3 -m app.main
+# 打开 http://127.0.0.1:8000
 ```
 
-如需写入 MySQL，先创建数据库并安装项目依赖，然后执行 [schema.sql](app/storage/schema.sql) 或开启自动建表：
+后端直接 serve `web/dist/` 的构建产物。
 
-```bash
-pip install -e .
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS nearnow CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-mysql -u root -p nearnow < app/storage/schema.sql
-
-export NEARNOW_STORAGE_BACKEND=mysql
-export MYSQL_HOST=127.0.0.1
-export MYSQL_PORT=3306
-export MYSQL_DATABASE=nearnow
-export MYSQL_USER=nearnow
-export MYSQL_PASSWORD="你的 MySQL 密码"
-python3 -m app.main
-```
-
-也可以设置 `NEARNOW_MYSQL_AUTO_MIGRATE=true`，服务启动时会尝试自动创建所需表。
-
-环境变量文件建议：
-
-- `.env.example`：GitHub 可上传的安全占位模板。
-- `.env.local.example`：本地真实 Key 模板，复制为 `.env.local` 后填写真实 `LONGCAT_API_KEY`。
-- `.env` / `.env.local`：本地私密配置，已被 `.gitignore` 忽略，不要提交。
-
-命令行试用：
+### 命令行试用
 
 ```bash
 python3 -m cli.main "下午带狗出去玩，顺便找个能带宠物的地方吃饭。"
 ```
 
-运行测试：
+### 运行测试
 
 ```bash
 python3 -m unittest
 ```
+
+## 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `LONGCAT_API_KEY` | LongCat LLM API Key | 空（未配置时 LLM 增强不可用） |
+| `LONGCAT_BASE_URL` | LongCat API 地址 | `https://api.longcat.chat/openai/v1` |
+| `LONGCAT_MODEL` | 模型名称 | `LongCat-Flash-Chat` |
+| `NEARNOW_PROVIDER_MODE` | `real` / `mock` | `mock` |
+| `NEARNOW_STORAGE_BACKEND` | `memory` / `mysql` | `memory` |
+| `MYSQL_HOST` / `PORT` / `DATABASE` / `USER` / `PASSWORD` | MySQL 连接 | - |
+
+完整变量见 [.env.example](.env.example)。
+
+## 登录与存储
+
+首次使用同一账号和密码会自动创建本地账号。登录后保存出发位置、计划记录和同行通知人。
+
+默认内存存储，适合本地调试。如需 MySQL：
+
+```bash
+pip install -e .
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS nearnow CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql -u root -p nearnow < app/storage/schema.sql
+export NEARNOW_STORAGE_BACKEND=mysql
+```
+
+设置 `NEARNOW_MYSQL_AUTO_MIGRATE=true` 可在启动时自动建表。
+
+## 定位
+
+网页中点击「定位」按钮调用浏览器定位授权。前端将经纬度降为约 1km 级别后调用后端地址反查，按「城市 + 区/县 + 商圈/地标」填回输入框。手动输入建议同一格式，例如 `北京 朝阳区 望京 SOHO`。
+
+## 文档
+
+- [总体设计](docs/design.md) — 架构、Agent 流程、Planning 策略
+- [API 契约](docs/api_contract.md) — 请求响应结构与错误码
+- [开发指南](docs/development_guide.md) — 技术栈、目录职责、测试策略
+- [竞品调研](docs/ai_agent_benchmark.md) — 可借鉴的 Agent 产品能力
+- [真实服务接入](docs/production_integration.md) — 地图、POI、路线接入方案
+- [Demo 脚本](docs/demo_script.md) — 演示路径与异常场景

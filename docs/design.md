@@ -502,14 +502,19 @@ BookingProvider
 | 用户拒绝确认 | 保留方案，不执行副作用动作 |
 | 部分执行失败 | 返回已完成动作、失败动作和补救方案 |
 
-## 9. 推荐技术方案
+## 9. 技术方案
 
-- 后端：Python 3.11+、FastAPI、Pydantic。
-- CLI：Typer 或 argparse。
-- Web UI：React、Vite、TypeScript。
-- 测试：pytest。
-- 日志：标准 logging 或 structlog。
-- 数据：MVP 使用内存 Mock 数据，生产化接入真实 Provider，并引入缓存层保存 POI、路线和可用性查询结果。
+当前实现：
+
+- 后端：Python 3.11+、标准库 `http.server.ThreadingHTTPServer`。
+- CLI：argparse。
+- Web UI：React 18、Vite、TypeScript、CSS Modules。
+- 测试：unittest。
+- 数据：内存 Mock 数据（默认）或 MySQL；真实 Provider 使用 Overpass + OSRM + Nominatim。
+
+后续规划：
+
+- 生产化接入更多真实 Provider（高德/Google/美团），引入缓存层保存 POI、路线和可用性查询结果。
 
 ## 10. 质量要求
 

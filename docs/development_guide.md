@@ -2,257 +2,220 @@
 
 ## 1. 技术栈
 
-推荐以 Python 后端为主完成 MVP 和后续真实服务接入：
+后端：
 
 - Python 3.11+
-- FastAPI
-- Pydantic
-- pytest
-- Typer 或 argparse
+- 标准库 `http.server`（无 Flask / FastAPI 依赖）
+- `mysql-connector-python`（可选，MySQL 存储）
 
-若需要 Web UI：
+前端：
 
-- React
+- React 18
 - TypeScript
 - Vite
+- CSS Modules
+
+测试：
+
+- Python 标准库 `unittest`
 
 ## 2. 目录职责
 
 ```text
 app/
-├── main.py                  FastAPI 应用入口
-├── config.py                配置项
-├── api/                     HTTP 路由和请求响应 Schema
+├── main.py                  HTTP 服务入口（ThreadingHTTPServer）
+├── auth.py                  登录/注册/会话认证
 ├── agent/                   Agent 核心编排
-├── domain/                  领域模型、枚举、约束对象
-├── tools/                   工具抽象和工具实现
-├── providers/               Mock/真实服务 Provider 适配层
-├── mock_api/                Mock 数据与 Mock 服务
-└── utils/                   时间、距离、日志等通用能力
+│   ├── orchestrator.py      plan() / confirm() 生命周期
+│   ├── intent_parser.py     规则意图解析（中文关键词匹配）
+│   ├── longcat_intent_parser.py  LLM 增强意图解析
+│   ├── strategy.py          策略构建（确定性 + LLM 增强）
+│   ├── context_builder.py   规划上下文构建
+│   ├── planner.py           硬约束过滤 + 软约束评分
+│   ├── candidate_selector.py  候选方案选择
+│   ├── executor.py          执行管理器
+│   ├── participant_constraints.py  参与者约束归一化
+│   ├── response_generator.py      文本方案生成
+│   └── longcat_response_generator.py  LLM 增强方案生成
+├── domain/                  领域模型（Plan, Activity, Restaurant 等 dataclass）
+│   ├── models.py
+│   └── enums.py
+├── providers/               外部服务适配层
+│   ├── base.py              LocalLifeProvider Protocol 接口
+│   ├── mock_provider.py     Mock 数据 Provider
+│   ├── real_provider.py     Overpass API + OSRM 真实 Provider
+│   ├── location_provider.py Nominatim 地理编码 / 逆地理编码
+│   ├── longcat_client.py    LongCat LLM 客户端
+│   └── meituan_link.py      美团跳转链接生成
+├── storage/                 存储层
+│   ├── repository.py        MemoryAppRepository / MySQLAppRepository
+│   └── schema.sql           MySQL 建表语句
+└── utils/                   工具函数
+    ├── time_utils.py        时间加减
+    └── ids.py               ID 生成器
+
+web/                         React 前端
+├── index.html               Vite 入口
+├── package.json             依赖与脚本
+├── vite.config.ts           开发代理配置
+├── tsconfig.json            TypeScript 配置
+└── src/
+    ├── main.tsx             React 挂载点
+    ├── App.tsx              视图路由与全局状态
+    ├── api/
+    │   ├── types.ts         TypeScript 接口定义
+    │   └── client.ts        fetch 封装
+    ├── components/          可复用组件
+    │   ├── Ambient.tsx      背景光效
+    │   ├── Header.tsx       顶部品牌栏
+    │   ├── ProgressRing.tsx SVG 进度环
+    │   ├── StepList.tsx     步骤列表
+    │   ├── Timeline.tsx     时间轴
+    │   ├── RouteSelector.tsx 交通方式选择
+    │   ├── ChipList.tsx     标签列表
+    │   ├── ExampleGrid.tsx  示例目标网格
+    │   └── Receipt.tsx      执行回执
+    ├── views/               7 个视图
+    │   ├── LoginView.tsx
+    │   ├── InputView.tsx
+    │   ├── AnalyzingView.tsx
+    │   ├── ProposalView.tsx
+    │   ├── ExecutingView.tsx
+    │   ├── SuccessView.tsx
+    │   └── ErrorView.tsx
+    ├── hooks/               自定义 Hooks
+    │   ├── useAuth.ts       认证状态
+    │   ├── useLocation.ts   浏览器定位
+    │   └── useTheme.ts      深浅色主题
+    ├── utils/               工具函数
+    │   ├── labels.ts        中文标签映射
+    │   └── route.ts         路线编辑、同伴解析
+    └── styles/
+        └── global.css       CSS 变量与 reset
+
+cli/                         命令行入口
+└── main.py
+
+tests/                       单元测试
+└── test_agent.py
+
+docs/                        文档
 ```
 
-核心目录说明：
+## 3. 开发流程
 
-| 目录 | 职责 |
-| --- | --- |
-| `app/api` | 暴露 `/agent/plan`、`/agent/confirm`、Mock Provider API 和后续真实模式入口 |
-| `app/agent` | 实现意图解析、规划、工具路由、执行和回复生成 |
-| `app/domain` | 定义 Plan、Schedule、Action、Activity、Restaurant 等模型 |
-| `app/tools` | 封装可被 Agent 调用的工具，不直接写业务编排 |
-| `app/providers` | 封装地图、POI、门店、路线、预约等 Provider，支持 Mock 和真实实现切换 |
-| `app/mock_api` | 提供活动、餐厅、预约、通知等假数据和假接口 |
-| `tests` | 覆盖核心路径和异常路径 |
+### 后端
 
-## 3. 推荐实现顺序
+```bash
+python3 -m app.main          # 启动 HTTP 服务 :8000
+python3 -m cli.main "query"  # 命令行测试
+python3 -m unittest          # 运行测试
+```
 
-### 阶段 1：基础骨架
+### 前端
 
-1. 初始化 Python 项目和依赖。
-2. 创建 FastAPI 应用。
-3. 定义 Pydantic 领域模型。
-4. 提供 `/api/agent/plan` 和 `/api/agent/confirm` 空实现。
+```bash
+cd web
+npm install                  # 安装依赖
+npm run dev                  # 开发服务器 :3000（API 代理到 :8000）
+npm run build                # 生产构建到 dist/
+npx tsc --noEmit             # TypeScript 类型检查
+```
 
-### 阶段 2：Mock API
+### 开发模式工作流
 
-1. 创建活动、餐厅、预约、通知 Mock 数据。
-2. 实现活动查询、餐厅查询、活动预约、餐厅预订、通知发送。
-3. 加入可控异常数据，例如满员活动和无位餐厅。
+1. 终端 A：`python3 -m app.main`（后端 :8000）
+2. 终端 B：`cd web && npm run dev`（前端 :3000）
+3. 浏览器打开 `http://localhost:3000`
+4. Vite 自动代理 `/api/*` 到后端
 
-### 阶段 3：Agent 编排
+### 生产模式
 
-1. 实现 `IntentParser`，从输入中提取时间、人数、偏好。
-2. 接入 `LongCatClient` 作为 LLM Provider，用于增强意图解析和最终回复生成；未配置 API Key 或 API 调用失败时必须返回错误，不得使用本地规则或 Mock 数据假装成功。
-3. 实现 `ParticipantConstraintBuilder` 和 `ContextBuilder`，补全默认时间、距离、参与者画像和约束。
-4. 实现 `ToolRouter`，统一调用 Provider 工具。
-5. 实现 `PlanningEngine`，完成硬约束过滤和软约束评分。
-6. 实现 `ResponseGenerator`，生成用户可读方案。
-
-### 阶段 4：执行闭环
-
-1. 保存 `plan_id` 到内存状态。
-2. 用户确认后读取待执行动作。
-3. 依次执行预约、订座、通知。
-4. 支持部分失败和补救输出。
-
-### 阶段 5：Provider 抽象
-
-1. 定义 `GeoProvider`、`PoiProvider`、`MerchantProvider`、`RouteProvider`、`BookingProvider` 接口。
-2. 将 Mock API 包装为 `MockProvider` 实现。
-3. Agent 只依赖 Provider 接口，不依赖 Mock 数据结构。
-4. 为 `mock`、`real`、`hybrid` 三种运行模式预留配置。
-
-### 阶段 6：真实位置、店铺和交通接入
-
-1. 接入真实定位或地址解析能力，支持经纬度和地址互转。
-2. 接入真实 POI，返回真实活动地点和真实店铺名称。
-3. 接入真实餐厅或商家数据，支持营业时间、评分、人均、标签和可订状态。
-4. 接入路线服务，支持步行、驾车、公交/地铁、网约车、骑行。
-5. 将交通方式纳入 Planning 评分。
-6. 增加 Provider 超时、限流、无结果和权限失败处理。
-
-### 阶段 7：Demo 与测试
-
-1. 补充 CLI 或 Web UI。
-2. 完成 Mock 正常场景 Demo。
-3. 完成真实模式的规划链路冒烟测试。
-4. 完成至少 3 个异常场景 Demo。
-5. 编写 pytest 测试用例。
+```bash
+cd web && npm run build
+python3 -m app.main
+# 浏览器打开 http://127.0.0.1:8000
+```
 
 ## 4. Agent 状态流
 
 ```text
 created
- -> parsed
- -> context_ready
- -> tools_queried
- -> planned
- -> waiting_confirmation
- -> executing
- -> completed
+ → parsed
+ → context_ready
+ → tools_queried
+ → planned
+ → waiting_confirmation
+ → executing
+ → completed
 ```
 
-失败状态：
+失败状态：`failed_recoverable`、`failed_final`
 
-```text
-failed_recoverable
-failed_final
-```
+## 5. 核心模块说明
 
-## 5. 关键接口设计
+### 5.1 Intent Parser
 
-### 5.1 工具基类
+规则模式 (`intent_parser.py`)：中文关键词匹配，提取参与者类型、偏好、时间窗口和距离半径。
 
-```python
-from typing import Protocol, Any
+LLM 模式 (`longcat_intent_parser.py`)：调用 LongCat API 增强解析，失败时返回错误而非降级。
 
+### 5.2 Planning Engine
 
-class Tool(Protocol):
-    name: str
+硬约束过滤 → 候选组合评分 → 排序选优。评分因子：参与者适配、距离、交通舒适度、策略标签、等待时间、价格。
 
-    def run(self, payload: dict[str, Any]) -> dict[str, Any]:
-        ...
-```
+### 5.3 Provider 层
 
-### 5.2 Provider 接口
+所有外部数据通过 `LocalLifeProvider` Protocol 接口获取，支持 Mock 和 Real 实现切换：
 
-```python
-from typing import Protocol
+- **Mock**: 内置测试数据
+- **Real**: Overpass API (POI/餐厅) + OSRM (路线) + Nominatim (地理编码)
 
+### 5.4 前端架构
 
-class GeoProvider(Protocol):
-    def geocode(self, address: str, city: str | None = None) -> GeoPoint:
-        ...
-
-
-class PoiProvider(Protocol):
-    def search_activities(self, query: ActivitySearchQuery) -> list[Activity]:
-        ...
-
-
-class MerchantProvider(Protocol):
-    def search_restaurants(self, query: RestaurantSearchQuery) -> list[Restaurant]:
-        ...
-
-    def check_availability(self, query: AvailabilityQuery) -> Availability:
-        ...
-
-
-class RouteProvider(Protocol):
-    def calculate_route(self, query: RouteQuery) -> RouteOption:
-        ...
-
-    def calculate_route_matrix(self, query: RouteMatrixQuery) -> RouteMatrix:
-        ...
-```
-
-### 5.3 规划器接口
-
-```python
-class PlanningEngine:
-    def generate_plan(self, context: PlanningContext) -> Plan:
-        ...
-```
-
-### 5.4 执行器接口
-
-```python
-class ExecutionManager:
-    def execute(self, plan: Plan, action_ids: list[str]) -> ExecutionResult:
-        ...
-```
+- 7 个视图组件通过 `currentView` 状态切换
+- `useAuth` / `useLocation` / `useTheme` 封装副作用
+- CSS Modules 实现样式作用域隔离
+- 所有 API 调用通过 `api/client.ts` 封装，带 TypeScript 类型
 
 ## 6. 测试策略
 
-必须覆盖：
+当前测试覆盖：
 
-- `IntentParser` 能从自然语言中提取时间、人数、参与者关系和偏好。
-- `LongCatIntentParser` 在 API 可用时能解析结构化 JSON，在 API 不可用或返回异常时返回可恢复错误。
-- `LongCatResponseGenerator` 在 API 可用时能润色方案，在 API 不可用时返回可恢复错误。
-- `ParticipantConstraintBuilder` 能处理闺蜜、恋人、孩子、宠物、老人、同事等通用角色，而不是只支持题目样例。
-- `PlanningEngine` 能过滤不满足硬约束的活动和餐厅。
-- `PlanningEngine` 能在多个候选方案中选择高分方案。
-- `PlanningEngine` 能根据步行、驾车、公共交通等路线结果选择合理交通方式。
-- `ExecutionManager` 只执行用户确认的动作。
-- 餐厅无位时返回备选餐厅。
-- 活动满员时返回备选活动。
-- 出发地缺失时返回追问，而不是生成假方案。
-- 真实模式下不得输出 Mock 店铺名或编造店铺名。
-- Provider 超时或无结果时能降级到可恢复状态。
+- 意图解析（规则模式 + LLM 模式）
+- 参与者约束归一化
+- Planning 排序与评分
+- LongCat API 集成
+- 认证与存储
+- 端到端 Agent 流程
 
-推荐测试文件：
+运行：`python3 -m unittest`
 
-```text
-tests/
-├── test_intent_parser.py
-├── test_context_builder.py
-├── test_planner.py
-├── test_tool_router.py
-├── test_executor.py
-└── test_agent_api.py
-```
+## 7. 环境变量
 
-## 7. 日志与可观测性
-
-每次 Agent 调用需要记录：
-
-- `request_id`
-- 原始用户输入
-- 解析后的结构化上下文
-- 工具调用名称
-- 工具调用输入摘要
-- 工具调用结果状态
-- Provider 名称和运行模式
-- 路线交通方式和耗时
-- 最终选中方案
-- 执行动作结果
-
-日志示例：
-
-```json
-{
-  "request_id": "req_001",
-  "stage": "tool_call",
-  "tool": "restaurant_search",
-  "status": "success",
-  "candidate_count": 3
-}
-```
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `LONGCAT_API_KEY` | LongCat LLM API Key | 空 |
+| `LONGCAT_BASE_URL` | API 地址 | `https://api.longcat.chat/openai/v1` |
+| `LONGCAT_MODEL` | 模型名 | `LongCat-Flash-Chat` |
+| `LONGCAT_TIMEOUT_SECONDS` | 超时秒数 | `30` |
+| `NEARNOW_PROVIDER_MODE` | `real` / `mock` | `mock` |
+| `NEARNOW_STORAGE_BACKEND` | `memory` / `mysql` | `memory` |
+| `NEARNOW_MYSQL_AUTO_MIGRATE` | 自动建表 | `false` |
+| `MYSQL_HOST` / `PORT` / `DATABASE` / `USER` / `PASSWORD` | MySQL 连接 | - |
 
 ## 8. 验收标准
 
-功能验收：
+功能：
 
-- 输入一句自然语言即可生成完整下午方案。
-- 方案中包含活动、餐厅、时间轴和执行动作。
-- 用户确认后可完成预约、订座和通知。
-- 异常场景有可恢复输出。
+- 输入一句自然语言即可生成完整活动方案
+- 方案包含活动、餐厅、时间轴、交通方式和执行动作
+- 用户确认后完成预约、订座和通知
+- 异常场景有可恢复输出
 
-工程验收：
+工程：
 
-- 所有核心模块有清晰职责。
-- API 请求响应结构稳定。
-- Mock 数据可复现。
-- Provider 接口和业务逻辑解耦。
-- 真实地理位置、真实店铺名和交通方式选择有明确接入路径。
-- 测试覆盖正常路径和异常路径。
-- README 和文档能指导新开发者完成项目启动。
+- API 请求响应结构稳定
+- Provider 接口和业务逻辑解耦
+- 测试覆盖正常路径和异常路径
+- 文档能指导新开发者完成启动

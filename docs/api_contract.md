@@ -91,67 +91,26 @@ POST /api/agent/plan
 ```json
 {
   "message": "今天下午想和老婆孩子、朋友出去玩几个小时，别离家太远，帮我安排一下。",
-  "mode": "mock",
+  "mode": "real",
   "user_context": {
-    "home_location": "望京 SOHO",
+    "home_location": "北京 朝阳区 望京 SOHO",
     "city": "北京",
     "coordinates": {
       "lat": 39.9957,
       "lng": 116.4813
     },
-    "location_permission_granted": true
+    "location_permission_granted": true,
+    "location_source": "browser",
+    "precision": "approximate"
   },
-  "transport_preferences": {
-    "allowed_modes": [
-      "walking",
-      "driving",
-      "public_transit",
-      "ride_hailing"
-    ],
-    "prefer_kid_friendly": true,
-    "max_single_leg_minutes": 30
-  },
-  "participants": [
+  "companions": [
     {
-      "relation": "self",
-      "count": 1
-    },
-    {
-      "relation": "partner",
-      "count": 1,
-      "constraints": [
-        {
-          "type": "diet",
-          "value": "low_calorie",
-          "priority": "medium"
-        }
-      ]
-    },
-    {
-      "relation": "child",
-      "count": 1,
-      "age": 5,
-      "constraints": [
-        {
-          "type": "activity",
-          "value": "kid_friendly",
-          "priority": "hard"
-        }
-      ]
-    },
-    {
-      "relation": "friend_group",
-      "count": 4
+      "name": "小张",
+      "relation": "朋友",
+      "contact_method": "phone",
+      "contact_value": "13800000000"
     }
-  ],
-  "scenario_tags": [
-    "family",
-    "friend_group"
-  ],
-  "constraint_policy": {
-    "hard_constraints_must_satisfy": true,
-    "explain_tradeoffs": true
-  }
+  ]
 }
 ```
 
@@ -281,7 +240,8 @@ POST /api/agent/confirm
     "action_001",
     "action_002",
     "action_003"
-  ]
+  ],
+  "selected_route_mode": "driving"
 }
 ```
 
