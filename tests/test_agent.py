@@ -1474,6 +1474,47 @@ class LocalPlannerAgentTest(unittest.TestCase):
         self.assertIn("闺蜜", " ".join(bestie_plan["data"]["participant_summary"]))
         self.assertIn("宠物", " ".join(pet_plan["data"]["participant_summary"]))
 
+    def test_plan_includes_weighted_alternative_strategies(self) -> None:
+        agent = test_agent()
+        response = agent.plan(
+            {
+                "message": "今天下午附近走走，顺便吃饭。",
+                "user_context": USER_CONTEXT,
+                "companions": [{"name": "Lily", "relation": "闺蜜", "contact_value": "lily@example.com"}],
+            }
+        )
+
+        self.assertTrue(response["success"], response)
+        alternatives = response["data"]["alternatives"]
+        strategies = {item["strategy"] for item in alternatives}
+
+        self.assertIn("place_first", strategies)
+        self.assertIn("distance_first", strategies)
+        self.assertTrue(all("score_parts" in item for item in alternatives))
+        self.assertTrue(all("tradeoff" in item for item in alternatives))
+        self.assertTrue(all(item.get("plan", {}).get("plan_id") for item in alternatives))
+
+    def test_weighted_alternative_plan_can_be_confirmed(self) -> None:
+        agent = test_agent()
+        response = agent.plan(
+            {
+                "message": "今天下午附近走走，顺便吃饭。",
+                "user_context": USER_CONTEXT,
+                "companions": [{"name": "Lily", "relation": "闺蜜", "contact_value": "lily@example.com"}],
+            }
+        )
+        alternative_plan = response["data"]["alternatives"][0]["plan"]
+        confirmed = agent.confirm(
+            {
+                "plan_id": alternative_plan["plan_id"],
+                "selected_route_mode": alternative_plan["route_options"][0]["mode"],
+                "confirmed_action_ids": [item["action_id"] for item in alternative_plan["pending_actions"]],
+            }
+        )
+
+        self.assertTrue(confirmed["success"], confirmed)
+        self.assertEqual(alternative_plan["plan_id"], confirmed["data"]["plan_id"])
+
     def test_confirm_executes_pending_actions(self) -> None:
         agent = test_agent()
         planned = agent.plan(

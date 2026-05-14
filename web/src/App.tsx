@@ -93,8 +93,9 @@ export function App() {
     [user, location],
   );
 
-  const handleConfirm = useCallback(async () => {
-    if (!plan) return;
+  const handleConfirm = useCallback(async (selectedPlan?: Plan) => {
+    const planToConfirm = selectedPlan || plan;
+    if (!planToConfirm) return;
     setCurrentView("executing");
 
     const controller = createAbortController();
@@ -102,9 +103,9 @@ export function App() {
 
     try {
       const data = await confirmPlan(
-        plan.plan_id,
-        plan.pending_actions.map((a) => a.action_id),
-        selectedRouteMode(plan),
+        planToConfirm.plan_id,
+        planToConfirm.pending_actions.map((a) => a.action_id),
+        selectedRouteMode(planToConfirm),
         controller.signal,
       );
       setExecution(data);

@@ -58,12 +58,30 @@ export interface Plan {
   schedule: ScheduleItem[];
   route_options: RouteOption[];
   pending_actions: PendingAction[];
+  alternatives?: PlanAlternative[];
   participant_summary: string[];
   risk_notes: string[];
   final_message: string;
   route_edit_ready?: boolean;
   base_summary?: string;
   static_risk_notes?: string[];
+}
+
+export interface PlanAlternative {
+  strategy: string;
+  label: string;
+  description: string;
+  title: string;
+  reason: string;
+  tradeoff: string;
+  activity?: Record<string, unknown>;
+  restaurant?: Record<string, unknown>;
+  route_mode?: string;
+  duration_minutes?: number;
+  distance_km?: number;
+  score?: number;
+  score_parts?: Record<string, number>;
+  plan?: Plan;
 }
 
 export interface HandoffLink {

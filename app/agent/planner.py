@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+
 from app.agent.candidate_selector import CandidateDecision, CandidateTuple, LongCatCandidateSelector
 from app.agent.context_builder import PlanningContext
 from app.agent.persona_query import CandidateQualityGate, CandidateQualityReport, PersonaQueryPlanner, PersonaSearchProfile
@@ -21,6 +23,61 @@ from app.utils.time_utils import add_minutes
 MAX_ROUTE_ACTIVITY_CANDIDATES = 6
 MAX_RESTAURANT_CANDIDATES = 12
 MAX_SELECTOR_CANDIDATES = 8
+
+
+@dataclass(frozen=True)
+class CandidateScoreParts:
+    activity: float
+    restaurant: float
+    route: float
+    pair: float
+    proximity: float
+
+
+@dataclass(frozen=True)
+class CandidateScoringProfile:
+    key: str
+    label: str
+    description: str
+    activity_weight: float
+    restaurant_weight: float
+    route_weight: float
+    pair_weight: float
+    proximity_weight: float = 0
+
+
+BALANCED_PROFILE = CandidateScoringProfile(
+    key="balanced",
+    label="综合推荐",
+    description="画像匹配、距离、交通和餐饮体验均衡。",
+    activity_weight=1,
+    restaurant_weight=1,
+    route_weight=1,
+    pair_weight=1,
+)
+
+ALTERNATIVE_SCORING_PROFILES = [
+    CandidateScoringProfile(
+        key="place_first",
+        label="地点优先",
+        description="更看重地点和餐厅是否贴合人物画像，允许稍微多移动。",
+        activity_weight=1.45,
+        restaurant_weight=1.35,
+        route_weight=0.65,
+        pair_weight=0.65,
+        proximity_weight=0.2,
+    ),
+    CandidateScoringProfile(
+        key="distance_first",
+        label="距离优先",
+        description="更看重少移动、近距离和动线顺畅，体验匹配适当让位。",
+        activity_weight=0.65,
+        restaurant_weight=0.75,
+        route_weight=1.45,
+        pair_weight=1.65,
+        proximity_weight=2.2,
+    ),
+]
 
 
 class PlanningEngine:
@@ -75,11 +132,12 @@ class PlanningEngine:
             for restaurant in restaurants:
                 if not self._satisfies_restaurant_hard_constraints(restaurant, context):
                     continue
-                score = (
-                    self._activity_score(activity, context)
-                    + self._restaurant_score(restaurant, context)
-                    + self._route_score(selected_route, context)
-                    + self._pair_score(activity, restaurant, context)
+                score = self._weighted_candidate_score(
+                    activity,
+                    restaurant,
+                    selected_route,
+                    context,
+                    BALANCED_PROFILE,
                 )
                 candidates.append((score, activity, restaurant, selected_route, routes))
 
@@ -98,7 +156,13 @@ class PlanningEngine:
         _, activity, restaurant, selected_route, routes = selected_candidate
         for route in routes:
             route.selected = route is selected_route
-        alternatives = self._alternative_candidates(candidates, selected_candidate)
+        alternatives = self._weighted_alternatives(
+            candidates,
+            selected_candidate,
+            context,
+            quality_report,
+            search_radius_km,
+        )
         return self._build_plan(
             context,
             activity,
@@ -231,6 +295,209 @@ class PlanningEngine:
             3,
         )
 
+    def _weighted_alternatives(
+        self,
+        candidates: list[CandidateTuple],
+        selected_candidate: CandidateTuple,
+        context: PlanningContext,
+        quality_report: CandidateQualityReport | None = None,
+        search_radius_km: float | None = None,
+    ) -> list[dict]:
+        alternatives: list[dict] = []
+        used_pairs = {self._candidate_pair_key(selected_candidate)}
+        used_activities = {selected_candidate[1].activity_id}
+        used_restaurants = {selected_candidate[2].restaurant_id}
+
+        for profile in ALTERNATIVE_SCORING_PROFILES:
+            candidate = self._best_weighted_candidate(
+                candidates,
+                profile,
+                context,
+                used_pairs,
+                used_activities,
+                used_restaurants,
+            )
+            if candidate is None:
+                continue
+            used_pairs.add(self._candidate_pair_key(candidate))
+            used_activities.add(candidate[1].activity_id)
+            used_restaurants.add(candidate[2].restaurant_id)
+            alternatives.append(self._alternative_payload(candidate, profile, context, quality_report, search_radius_km))
+
+        if len(alternatives) < len(ALTERNATIVE_SCORING_PROFILES):
+            for candidate in self._alternative_candidates(candidates, selected_candidate):
+                if len(alternatives) >= len(ALTERNATIVE_SCORING_PROFILES):
+                    break
+                if self._candidate_pair_key(candidate) in used_pairs:
+                    continue
+                alternatives.append(self._alternative_payload(candidate, BALANCED_PROFILE, context, quality_report, search_radius_km))
+                used_pairs.add(self._candidate_pair_key(candidate))
+
+        return alternatives
+
+    def _best_weighted_candidate(
+        self,
+        candidates: list[CandidateTuple],
+        profile: CandidateScoringProfile,
+        context: PlanningContext,
+        used_pairs: set[tuple[str, str]],
+        used_activities: set[str],
+        used_restaurants: set[str],
+    ) -> CandidateTuple | None:
+        ranked = sorted(
+            candidates,
+            key=lambda candidate: self._weighted_candidate_score(
+                candidate[1],
+                candidate[2],
+                candidate[3],
+                context,
+                profile,
+            ),
+            reverse=True,
+        )
+
+        for candidate in ranked:
+            if self._candidate_pair_key(candidate) not in used_pairs:
+                if candidate[1].activity_id not in used_activities and candidate[2].restaurant_id not in used_restaurants:
+                    return candidate
+        for candidate in ranked:
+            if self._candidate_pair_key(candidate) not in used_pairs:
+                if candidate[1].activity_id not in used_activities or candidate[2].restaurant_id not in used_restaurants:
+                    return candidate
+        for candidate in ranked:
+            if self._candidate_pair_key(candidate) not in used_pairs:
+                return candidate
+        return ranked[0] if ranked else None
+
+    def _candidate_pair_key(self, candidate: CandidateTuple) -> tuple[str, str]:
+        return candidate[1].activity_id, candidate[2].restaurant_id
+
+    def _candidate_score_parts(
+        self,
+        activity: Activity,
+        restaurant: Restaurant,
+        route: RouteOption,
+        context: PlanningContext,
+    ) -> CandidateScoreParts:
+        pair_distance = self._distance_km(activity.coordinates, restaurant.coordinates)
+        proximity = max(0, 18 - activity.distance_km - restaurant.distance_km - pair_distance)
+        return CandidateScoreParts(
+            activity=self._activity_score(activity, context),
+            restaurant=self._restaurant_score(restaurant, context),
+            route=self._route_score(route, context),
+            pair=self._pair_score(activity, restaurant, context),
+            proximity=proximity,
+        )
+
+    def _weighted_candidate_score(
+        self,
+        activity: Activity,
+        restaurant: Restaurant,
+        route: RouteOption,
+        context: PlanningContext,
+        profile: CandidateScoringProfile,
+    ) -> float:
+        parts = self._candidate_score_parts(activity, restaurant, route, context)
+        return (
+            parts.activity * profile.activity_weight
+            + parts.restaurant * profile.restaurant_weight
+            + parts.route * profile.route_weight
+            + parts.pair * profile.pair_weight
+            + parts.proximity * profile.proximity_weight
+        )
+
+    def _alternative_payload(
+        self,
+        candidate: CandidateTuple,
+        profile: CandidateScoringProfile,
+        context: PlanningContext,
+        quality_report: CandidateQualityReport | None = None,
+        search_radius_km: float | None = None,
+    ) -> dict:
+        _, activity, restaurant, route, _ = candidate
+        parts = self._candidate_score_parts(activity, restaurant, route, context)
+        score = self._weighted_candidate_score(activity, restaurant, route, context, profile)
+        route_options = self._route_options_for_candidate(route, candidate[4])
+        selected_route = next((item for item in route_options if item.selected), route_options[0])
+        plan = self._build_plan(
+            context,
+            activity,
+            restaurant,
+            selected_route,
+            route_options,
+            [],
+            [self._alternative_reason(profile, activity, restaurant, route)],
+            quality_report,
+            search_radius_km,
+        )
+        plan.title = f"{profile.label}：{activity.name} + {restaurant.name}"
+        return {
+            "strategy": profile.key,
+            "label": profile.label,
+            "description": profile.description,
+            "title": f"{activity.name} + {restaurant.name}",
+            "reason": self._alternative_reason(profile, activity, restaurant, route),
+            "tradeoff": self._alternative_tradeoff(profile),
+            "activity": {
+                "id": activity.activity_id,
+                "name": activity.name,
+                "category": activity.category,
+                "location": activity.location,
+                "distance_km": activity.distance_km,
+                "tags": activity.tags,
+                "provider": activity.provider,
+            },
+            "restaurant": {
+                "id": restaurant.restaurant_id,
+                "name": restaurant.name,
+                "location": restaurant.location,
+                "distance_km": restaurant.distance_km,
+                "tags": restaurant.tags,
+                "provider": restaurant.provider,
+            },
+            "route_mode": route.mode,
+            "duration_minutes": route.duration_minutes,
+            "distance_km": route.distance_km,
+            "score": round(score, 2),
+            "score_parts": {
+                "activity": round(parts.activity, 2),
+                "restaurant": round(parts.restaurant, 2),
+                "route": round(parts.route, 2),
+                "pair": round(parts.pair, 2),
+                "proximity": round(parts.proximity, 2),
+            },
+            "plan": plan,
+        }
+
+    def _route_options_for_candidate(self, selected_route: RouteOption, routes: list[RouteOption]) -> list[RouteOption]:
+        result = [
+            replace(route, selected=route.mode == selected_route.mode, route_geometry=list(route.route_geometry))
+            for route in routes
+        ]
+        if not any(route.selected for route in result) and result:
+            result[0].selected = True
+        return result
+
+    def _alternative_reason(
+        self,
+        profile: CandidateScoringProfile,
+        activity: Activity,
+        restaurant: Restaurant,
+        route: RouteOption,
+    ) -> str:
+        if profile.key == "place_first":
+            return f"更偏向地点体验：{activity.name} 和 {restaurant.name} 的标签更贴合当前人物画像。"
+        if profile.key == "distance_first":
+            return f"更偏向少移动：首段约 {route.duration_minutes} 分钟，活动和餐厅动线更紧凑。"
+        return f"作为备选组合，预计首段 {route.duration_minutes} 分钟到达。"
+
+    def _alternative_tradeoff(self, profile: CandidateScoringProfile) -> str:
+        if profile.key == "place_first":
+            return "可能比最近方案多一点移动时间，但地点匹配度更高。"
+        if profile.key == "distance_first":
+            return "更省路程和体力，但地点氛围或画像匹配可能略弱。"
+        return "在体验和距离之间保持相对均衡。"
+
     def _build_plan(
         self,
         context: PlanningContext,
@@ -238,7 +505,7 @@ class PlanningEngine:
         restaurant: Restaurant,
         selected_route: RouteOption,
         routes: list[RouteOption],
-        alternatives: list[tuple],
+        alternatives: list[dict],
         selection_reasoning: list[str] | None = None,
         quality_report: CandidateQualityReport | None = None,
         search_radius_km: float | None = None,
@@ -383,7 +650,7 @@ class PlanningEngine:
             schedule=schedule,
             route_options=routes,
             pending_actions=pending_actions,
-            alternatives=self._alternatives(alternatives),
+            alternatives=alternatives,
             risk_notes=self._risk_notes(context, selected_route, restaurant, quality_report),
             strategy=context.strategy,
             selection_reasoning=selection_reasoning or [],
@@ -787,14 +1054,3 @@ class PlanningEngine:
             else:
                 notes.append("携宠出行需要到店前再次确认宠物入内规则。")
         return notes
-
-    def _alternatives(self, alternatives: list[tuple]) -> list[dict]:
-        result = []
-        for _, activity, restaurant, route, _ in alternatives:
-            result.append(
-                {
-                    "title": f"{activity.name} + {restaurant.name}",
-                    "reason": f"备选交通方式 {route.mode}，预计 {route.duration_minutes} 分钟到达。",
-                }
-            )
-        return result

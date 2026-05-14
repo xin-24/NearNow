@@ -99,6 +99,10 @@ class LocalPlannerAgent:
             return self._longcat_error(exc)
 
         self.store.save(plan, mode)
+        for alternative in plan.alternatives:
+            alternative_plan = alternative.get("plan")
+            if isinstance(alternative_plan, Plan):
+                self.store.save(alternative_plan, mode)
         return {"success": True, "data": plan.to_dict(), "error": None}
 
     def confirm(self, payload: dict) -> dict:
