@@ -137,6 +137,7 @@ class RouteOption:
     walking_minutes: int = 0
     transfer_count: int = 0
     selected: bool = False
+    route_geometry: list[Coordinates] = field(default_factory=list)
 
 
 @dataclass
@@ -152,6 +153,7 @@ class ScheduleItem:
     coordinates: Coordinates | None = None
     provider: str | None = None
     provider_place_id: str | None = None
+    route_geometry: list[Coordinates] = field(default_factory=list)
 
 
 @dataclass

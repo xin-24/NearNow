@@ -189,7 +189,16 @@ class RealLocalLifeProviderTest(unittest.TestCase):
 
     def test_osrm_payload_builds_route_option(self) -> None:
         route = OpenStreetMapLocalLifeProvider().from_osrm_payload(
-            {"code": "Ok", "routes": [{"distance": 3200, "duration": 720}]},
+            {
+                "code": "Ok",
+                "routes": [
+                    {
+                        "distance": 3200,
+                        "duration": 720,
+                        "geometry": {"coordinates": [[116.48, 39.99], [116.49, 39.995]]},
+                    }
+                ],
+            },
             "出发地",
             "目的地",
             "driving",
@@ -197,6 +206,8 @@ class RealLocalLifeProviderTest(unittest.TestCase):
         self.assertEqual(12, route.duration_minutes)
         self.assertEqual(3.2, route.distance_km)
         self.assertEqual("driving", route.mode)
+        self.assertEqual(2, len(route.route_geometry))
+        self.assertEqual(39.99, route.route_geometry[0].lat)
 
     def test_osm_tags_are_inferred_from_place_type_not_blind_persona(self) -> None:
         provider = OpenStreetMapLocalLifeProvider(max_results=5)
@@ -312,6 +323,26 @@ class RealLocalLifeProviderTest(unittest.TestCase):
         self.assertNotIn("stroll_friendly", by_name["社区图书馆"].tags)
         self.assertNotIn("bestie", by_name["社区图书馆"].tags)
 
+    def test_persona_filters_focus_osm_activity_search(self) -> None:
+        provider = OpenStreetMapLocalLifeProvider(max_results=5)
+        elder_filters = provider._activity_filters(["elder", "stroll", "low_walking"])
+        bestie_filters = provider._activity_filters(["bestie", "afternoon_tea"])
+
+        self.assertIn(("leisure", "park"), elder_filters)
+        self.assertIn(("shop", "mall"), elder_filters)
+        self.assertNotIn(("amenity", "cinema"), elder_filters)
+        self.assertIn(("amenity", "cafe"), bestie_filters)
+
+    def test_persona_filters_focus_osm_restaurant_search(self) -> None:
+        provider = OpenStreetMapLocalLifeProvider(max_results=5)
+        elder_filters = provider._restaurant_filters(["elder", "proper_meal", "light_food"])
+        bestie_filters = provider._restaurant_filters(["bestie", "afternoon_tea"])
+
+        self.assertIn(("amenity", "restaurant"), elder_filters)
+        self.assertIn(("amenity", "food_court"), elder_filters)
+        self.assertNotIn(("amenity", "cafe"), elder_filters)
+        self.assertIn(("amenity", "cafe"), bestie_filters)
+
     def test_cafe_is_not_treated_as_elder_dinner_by_default(self) -> None:
         provider = OpenStreetMapLocalLifeProvider(max_results=5)
         restaurants = provider.from_overpass_restaurants_payload(
@@ -363,8 +394,113 @@ class RealLocalLifeProviderTest(unittest.TestCase):
 
         self.assertIn("heavy_food", restaurants[0].tags)
 
+    def test_noodle_shop_is_marked_as_quick_meal(self) -> None:
+        provider = OpenStreetMapLocalLifeProvider(max_results=5)
+        restaurants = provider.from_overpass_restaurants_payload(
+            {
+                "elements": [
+                    {
+                        "type": "node",
+                        "id": 1,
+                        "lat": 39.993,
+                        "lon": 116.478,
+                        "tags": {"name": "手耕扯面", "amenity": "restaurant"},
+                    }
+                ]
+            },
+            ["partner", "date"],
+            2,
+            Coordinates(39.9957, 116.4813),
+        )
+
+        self.assertIn("quick_meal", restaurants[0].tags)
+        self.assertIn("casual_meal", restaurants[0].tags)
+
 
 class PlanningRankingTest(unittest.TestCase):
+    def test_candidate_selection_pool_diversifies_repeated_restaurants(self) -> None:
+        activity_1 = Activity(
+            activity_id="activity_1",
+            name="公园",
+            category="leisure:park",
+            location="附近",
+            coordinates=Coordinates(39.99, 116.48),
+            distance_km=0.5,
+            duration_minutes=60,
+            capacity_left=10,
+            tags=["stroll_friendly"],
+        )
+        activity_2 = Activity(
+            activity_id="activity_2",
+            name="展览",
+            category="tourism:gallery",
+            location="附近",
+            coordinates=Coordinates(39.991, 116.481),
+            distance_km=0.8,
+            duration_minutes=60,
+            capacity_left=10,
+            tags=["date"],
+        )
+        activity_3 = Activity(
+            activity_id="activity_3",
+            name="商场",
+            category="shop:mall",
+            location="附近",
+            coordinates=Coordinates(39.992, 116.482),
+            distance_km=1.0,
+            duration_minutes=60,
+            capacity_left=10,
+            tags=["bestie"],
+        )
+        repeated = Restaurant(
+            restaurant_id="restaurant_noodle",
+            name="手耕扯面",
+            location="附近",
+            coordinates=Coordinates(39.99, 116.48),
+            distance_km=0.3,
+            available=True,
+            table_size=4,
+            wait_minutes=0,
+            tags=["proper_meal", "quick_meal"],
+        )
+        bistro = Restaurant(
+            restaurant_id="restaurant_bistro",
+            name="安静小馆",
+            location="附近",
+            coordinates=Coordinates(39.991, 116.481),
+            distance_km=0.7,
+            available=True,
+            table_size=4,
+            wait_minutes=0,
+            tags=["date", "quiet"],
+        )
+        tea = Restaurant(
+            restaurant_id="restaurant_tea",
+            name="花园下午茶",
+            location="附近",
+            coordinates=Coordinates(39.992, 116.482),
+            distance_km=1.0,
+            available=True,
+            table_size=4,
+            wait_minutes=0,
+            tags=["bestie", "afternoon_tea"],
+        )
+        route = RouteOption("家", "目的地", "walking", 8, 0.6, 0, 0.7, 0.6)
+        candidates = [
+            (100.0, activity_1, repeated, route, [route]),
+            (99.0, activity_2, repeated, route, [route]),
+            (98.0, activity_3, repeated, route, [route]),
+            (90.0, activity_1, bistro, route, [route]),
+            (89.0, activity_2, tea, route, [route]),
+            (88.0, activity_3, bistro, route, [route]),
+        ]
+
+        pool = PlanningEngine(MockLocalLifeProvider())._candidate_selection_pool(candidates, 4)
+
+        restaurant_ids = [candidate[2].restaurant_id for candidate in pool]
+        self.assertEqual(len(set(restaurant_ids)), 3)
+        self.assertLessEqual(restaurant_ids.count("restaurant_noodle"), 2)
+
     def test_bestie_profile_prefers_chat_and_photo_place(self) -> None:
         intent = PlanningIntent(
             message="和闺蜜下午拍照喝咖啡",
@@ -580,6 +716,19 @@ class PlanningStrategyTest(unittest.TestCase):
         self.assertNotEqual("需要补充或放宽条件", plan.title)
         self.assertIn("宠物公园", plan.title)
         self.assertTrue(any("必须电话确认" in note for note in plan.risk_notes))
+
+    def test_pet_plan_uses_takeaway_when_restaurant_pet_policy_is_unknown(self) -> None:
+        intent = IntentParser().parse("下午带狗出去玩，顺便找个能带宠物的地方吃饭。")
+        context = ContextBuilder().build(ParticipantConstraintBuilder().normalize(intent), USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+
+        plan = PlanningEngine(PetTakeawayProvider()).generate_plan(context)
+
+        self.assertNotEqual("需要补充或放宽条件", plan.title)
+        self.assertEqual(5, len(plan.schedule))
+        self.assertTrue(any("打包" in note or "外带" in note for note in plan.risk_notes))
+        restaurant_item = next(item for item in plan.schedule if item.type == "restaurant")
+        self.assertIn("外带", restaurant_item.reason)
 
 
 class MeituanHandoffTest(unittest.TestCase):
@@ -965,7 +1114,11 @@ class RuleBackedLongCatClient:
         if "意图解析器" in messages[0]["content"]:
             request = json.loads(messages[-1]["content"])
             intent = IntentParser().parse(request["message"])
-            return json.dumps(to_intent_payload(intent), ensure_ascii=False)
+            payload = to_intent_payload(intent)
+            fallback_participants = (request.get("fallback_reference") or {}).get("participants")
+            if fallback_participants:
+                payload["participants"] = fallback_participants
+            return json.dumps(payload, ensure_ascii=False)
         if "策略规划器" in messages[0]["content"]:
             request = json.loads(messages[-1]["content"])
             return json.dumps(request.get("fallback_strategy", {}), ensure_ascii=False)
@@ -1176,6 +1329,32 @@ class PetPossibleProvider:
         return {"status": "ready"}
 
 
+class PetTakeawayProvider(PetPossibleProvider):
+    def search_restaurants(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Restaurant]:
+        return [
+            Restaurant(
+                restaurant_id="restaurant_takeaway_001",
+                name="公园旁小馆",
+                location="公园旁",
+                coordinates=Coordinates(39.991, 116.481),
+                distance_km=1.2,
+                available=True,
+                table_size=4,
+                wait_minutes=0,
+                tags=["proper_meal", "takeaway_possible", "group_table"],
+                reservation_required=False,
+                average_price=80,
+                provider=self.provider_name,
+            )
+        ]
+
+
 def to_intent_payload(intent: PlanningIntent) -> dict:
     return {
         "start_time": intent.start_time,
@@ -1211,6 +1390,17 @@ class IntentParserTest(unittest.TestCase):
         self.assertIn("proper_meal", intent.preferences)
         self.assertIn("light_food", [constraint.value for participant in intent.participants for constraint in participant.constraints])
 
+    def test_explicit_companions_are_merged_and_normalized(self) -> None:
+        intent = IntentParser().parse(
+            "今天下午附近走走，顺便吃饭。",
+            [{"name": "Lily", "relation": "闺蜜"}],
+        )
+        relations = {participant.relation for participant in intent.participants}
+
+        self.assertIn("self", relations)
+        self.assertIn("bestie", relations)
+        self.assertIn("bestie", intent.scenario_tags)
+
 
 class LocalPlannerAgentTest(unittest.TestCase):
     def test_child_constraints_are_preferences_when_real_tags_are_sparse(self) -> None:
@@ -1224,6 +1414,18 @@ class LocalPlannerAgentTest(unittest.TestCase):
         self.assertNotEqual("需要补充或放宽条件", plan.title)
         self.assertEqual(5, len(plan.schedule))
         self.assertTrue(any("儿童需求已作为强偏好" in note for note in plan.risk_notes))
+        self.assertTrue(any("POI 数量偏少" in note or "标签较少" in note for note in plan.risk_notes))
+
+    def test_generated_plan_includes_route_geometry_for_map(self) -> None:
+        intent = IntentParser().parse("陪爸妈附近走走，别太累，晚饭清淡一点。")
+        context = ContextBuilder().build(ParticipantConstraintBuilder().normalize(intent), USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+
+        plan = PlanningEngine(MockLocalLifeProvider()).generate_plan(context)
+        travel_items = [item for item in plan.schedule if item.type == "travel"]
+
+        self.assertTrue(travel_items)
+        self.assertTrue(all(len(item.route_geometry) >= 2 for item in travel_items))
 
     def test_pet_plan_uses_pet_friendly_places(self) -> None:
         agent = test_agent()
@@ -1248,6 +1450,29 @@ class LocalPlannerAgentTest(unittest.TestCase):
         self.assertTrue(response["success"], response)
         summary = " ".join(response["data"]["participant_summary"])
         self.assertIn("少走路", summary)
+
+    def test_companions_drive_planning_when_message_is_generic(self) -> None:
+        agent = test_agent()
+        bestie_plan = agent.plan(
+            {
+                "message": "今天下午附近走走，顺便吃饭。",
+                "user_context": USER_CONTEXT,
+                "companions": [{"name": "Lily", "relation": "闺蜜", "contact_value": "lily@example.com"}],
+            }
+        )
+        pet_plan = agent.plan(
+            {
+                "message": "今天下午附近走走，顺便吃饭。",
+                "user_context": USER_CONTEXT,
+                "companions": [{"name": "小狗", "relation": "宠物", "contact_value": ""}],
+            }
+        )
+
+        self.assertTrue(bestie_plan["success"], bestie_plan)
+        self.assertTrue(pet_plan["success"], pet_plan)
+        self.assertNotEqual(bestie_plan["data"]["title"], pet_plan["data"]["title"])
+        self.assertIn("闺蜜", " ".join(bestie_plan["data"]["participant_summary"]))
+        self.assertIn("宠物", " ".join(pet_plan["data"]["participant_summary"]))
 
     def test_confirm_executes_pending_actions(self) -> None:
         agent = test_agent()

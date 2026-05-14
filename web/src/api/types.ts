@@ -14,6 +14,11 @@ export interface User {
   display_name: string;
 }
 
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
 export interface ScheduleItem {
   type: "travel" | "activity" | "restaurant";
   name: string;
@@ -24,6 +29,10 @@ export interface ScheduleItem {
   typeLabel?: string;
   transport_mode?: string;
   travel_minutes?: number;
+  coordinates?: Coordinates;
+  route_geometry?: Coordinates[];
+  provider?: string;
+  provider_place_id?: string;
 }
 
 export interface RouteOption {
@@ -32,6 +41,7 @@ export interface RouteOption {
   distance_km: number;
   estimated_cost: number;
   selected?: boolean;
+  route_geometry?: Coordinates[];
 }
 
 export interface PendingAction {

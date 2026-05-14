@@ -81,6 +81,23 @@
   font-size: 14px;
 }
 
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.metaRow span {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
 .reason {
   margin-top: 12px;
   padding: 12px;

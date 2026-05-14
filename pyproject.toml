@@ -1,11 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "nearnow-planner"
 version = "0.1.0"
 description = "邻刻计划 NearNow: local short-term activity planning and execution agent."
 requires-python = ">=3.11"
 dependencies = [
+  "fastapi>=0.115",
   "mysql-connector-python>=9.0",
+  "uvicorn[standard]>=0.30",
 ]
+
+[tool.setuptools.packages.find]
+include = ["app*", "cli*"]
+exclude = ["docs*", "tests*", "web*", "web-legacy*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

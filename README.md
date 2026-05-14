@@ -7,7 +7,7 @@
 ```text
 nearnow/
 ├── app/                        Python 后端
-│   ├── main.py                 HTTP 服务入口
+│   ├── main.py                 FastAPI 服务入口、路由、中间件、OpenAPI
 │   ├── auth.py                 登录/注册/会话
 │   ├── agent/                  Agent 核心编排
 │   │   ├── orchestrator.py     plan() / confirm() 生命周期
@@ -58,27 +58,40 @@ nearnow/
 ### 快速启动
 
 ```bash
-# 1. 安装前端依赖
+# 1. 创建并启用后端虚拟环境
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. 安装后端依赖
+python -m pip install -e .
+
+# 3. 安装前端依赖
 cd web && npm install && cd ..
 
-# 2. 配置环境变量
+# 4. 配置环境变量
 cp .env.local.example .env.local
 # 编辑 .env.local，填入 LONGCAT_API_KEY
 
-# 3. 启动后端
-python3 -m app.main
+# 5. 启动后端
+python -m app.main
 
-# 4. 另一个终端，启动前端开发服务器
+# 6. 另一个终端，启动前端开发服务器
 cd web && npm run dev
 ```
 
 打开 `http://localhost:3000`，Vite 会自动代理 API 请求到后端 `:8000`。
 
+FastAPI 文档地址：
+
+- Swagger UI：`http://127.0.0.1:8000/docs`
+- OpenAPI JSON：`http://127.0.0.1:8000/openapi.json`
+
 ### 生产构建
 
 ```bash
 cd web && npm run build
-python3 -m app.main
+source .venv/bin/activate
+python -m app.main
 # 打开 http://127.0.0.1:8000
 ```
 
@@ -87,13 +100,15 @@ python3 -m app.main
 ### 命令行试用
 
 ```bash
-python3 -m cli.main "下午带狗出去玩，顺便找个能带宠物的地方吃饭。"
+source .venv/bin/activate
+python -m cli.main "下午带狗出去玩，顺便找个能带宠物的地方吃饭。"
 ```
 
 ### 运行测试
 
 ```bash
-python3 -m unittest
+source .venv/bin/activate
+python -m unittest
 ```
 
 ## 环境变量
@@ -104,6 +119,9 @@ python3 -m unittest
 | `LONGCAT_BASE_URL` | LongCat API 地址 | `https://api.longcat.chat/openai/v1` |
 | `LONGCAT_MODEL` | 模型名称 | `LongCat-Flash-Chat` |
 | `NEARNOW_PROVIDER_MODE` | `real` / `mock` | `mock` |
+| `NEARNOW_CORS_ORIGINS` | 允许跨域访问的前端地址，逗号分隔 | `http://localhost:3000,http://127.0.0.1:3000` |
+| `NEARNOW_LOG_LEVEL` | 后端日志等级 | `INFO` |
+| `NEARNOW_COOKIE_SECURE` | Cookie 是否仅 HTTPS 传输 | `false` |
 | `NEARNOW_STORAGE_BACKEND` | `memory` / `mysql` | `memory` |
 | `MYSQL_HOST` / `PORT` / `DATABASE` / `USER` / `PASSWORD` | MySQL 连接 | - |
 

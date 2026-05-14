@@ -19,8 +19,6 @@ class LongCatIntentParser:
 
     def parse(self, message: str, explicit_participants: list[dict] | None = None) -> PlanningIntent:
         fallback_intent = self.fallback.parse(message, explicit_participants)
-        if explicit_participants:
-            return fallback_intent
         if not self.client.is_configured:
             raise LongCatAPIError("LONGCAT_API_KEY is not configured")
 
@@ -60,7 +58,27 @@ class LongCatIntentParser:
                     "radius_km": fallback_intent.radius_km,
                     "preferences": fallback_intent.preferences,
                     "scenario_tags": fallback_intent.scenario_tags,
+                    "participants": [
+                        {
+                            "relation": participant.relation,
+                            "count": participant.count,
+                            "age": participant.age,
+                            "constraints": [
+                                {
+                                    "type": constraint.type,
+                                    "value": constraint.value,
+                                    "priority": constraint.priority,
+                                }
+                                for constraint in participant.constraints
+                            ],
+                        }
+                        for participant in fallback_intent.participants
+                    ],
                 },
+                "rules": [
+                    "如果 fallback_reference.participants 中包含用户显式填写的同行者，必须保留这些人物画像。",
+                    "可以从自然语言中补充新的参与者、时间和偏好，但不要删除显式同行者。",
+                ],
                 "output_schema": {
                     "start_time": "HH:MM",
                     "end_time": "HH:MM",
@@ -99,7 +117,7 @@ class LongCatIntentParser:
         return value
 
     def _to_intent(self, message: str, data: dict[str, Any], fallback: PlanningIntent) -> PlanningIntent:
-        participants = self._participants(data.get("participants")) or fallback.participants
+        participants = self._merge_participants(fallback.participants, self._participants(data.get("participants")))
         return PlanningIntent(
             message=message,
             date=fallback.date,
@@ -111,6 +129,29 @@ class LongCatIntentParser:
             radius_km=self._radius(data.get("radius_km"), fallback.radius_km),
             required_actions=fallback.required_actions,
         )
+
+    def _merge_participants(
+        self,
+        fallback: list[ParticipantProfile],
+        parsed: list[ParticipantProfile],
+    ) -> list[ParticipantProfile]:
+        result: list[ParticipantProfile] = []
+        seen: set[str] = set()
+
+        def add(participant: ParticipantProfile) -> None:
+            key = participant.relation if participant.relation != "self" else "self"
+            if participant.id:
+                key = f"{key}:{participant.id}"
+            if key in seen:
+                return
+            seen.add(key)
+            result.append(participant)
+
+        for participant in fallback:
+            add(participant)
+        for participant in parsed:
+            add(participant)
+        return result or [ParticipantProfile(id="self", relation="self")]
 
     def _participants(self, values: Any) -> list[ParticipantProfile]:
         if not isinstance(values, list):

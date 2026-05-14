@@ -63,9 +63,10 @@ class LocalPlannerAgent:
         if not message:
             return self._error("EMPTY_MESSAGE", "请输入一句活动目标。", True)
         mode = self._normalize_mode(payload.get("mode"))
+        explicit_participants = self._explicit_participants(payload)
 
         try:
-            intent = self.parser.parse(message, payload.get("participants"))
+            intent = self.parser.parse(message, explicit_participants)
         except LongCatAPIError as exc:
             return self._longcat_error(exc)
 
@@ -215,6 +216,25 @@ class LocalPlannerAgent:
         if mode == RunMode.MOCK.value:
             return RunMode.MOCK.value
         return RunMode.REAL.value
+
+    def _explicit_participants(self, payload: dict) -> list[dict] | None:
+        participants = payload.get("participants")
+        if isinstance(participants, list) and participants:
+            return participants
+        companions = payload.get("companions")
+        if isinstance(companions, list) and companions:
+            return [
+                {
+                    "id": item.get("id") or item.get("name") or f"companion_{index + 1}",
+                    "name": item.get("name"),
+                    "relation": item.get("relation") or "companion",
+                    "count": item.get("count") or 1,
+                    "constraints": item.get("constraints") or [],
+                }
+                for index, item in enumerate(companions)
+                if isinstance(item, dict) and (item.get("name") or item.get("relation"))
+            ]
+        return None
 
     def _provider_for_mode(self, mode: str) -> LocalLifeProvider:
         if mode == RunMode.MOCK.value:

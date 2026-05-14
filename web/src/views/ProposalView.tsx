@@ -3,8 +3,9 @@ import type { Plan, HandoffLink } from "../api/types";
 import { Timeline } from "../components/Timeline";
 import { ChipList } from "../components/ChipList";
 import { RouteSelector } from "../components/RouteSelector";
+import { RouteMap } from "../components/RouteMap";
 import { modeLabel, actionTypeLabel } from "../utils/labels";
-import { selectedRoute, inferPartySize, preparePlanForRouteEditing } from "../utils/route";
+import { selectedRoute, inferPartySize, preparePlanForRouteEditing, selectRoute } from "../utils/route";
 import styles from "./ProposalView.module.css";
 
 interface Props {
@@ -25,38 +26,10 @@ export function ProposalView({ plan, onEdit, onConfirm, onRouteChange, onPlanUpd
   const handleRouteSelect = useCallback(
     (mode: string) => {
       const updated = structuredClone(plan);
-      const r = updated.route_options.find((item) => item.mode === mode);
-      if (!r) return;
-
-      updated.route_options.forEach((item) => {
-        item.selected = item.mode === mode;
-      });
-
-      const travelIndex = updated.schedule.findIndex((item) => item.type === "travel");
-      const travelItem = updated.schedule[travelIndex];
-      if (travelItem) {
-        const prevDuration = travelItem.travel_minutes || route?.duration_minutes || r.duration_minutes;
-        const delta = r.duration_minutes - prevDuration;
-        travelItem.end_time = addMinutes(travelItem.start_time, r.duration_minutes);
-        travelItem.travel_minutes = r.duration_minutes;
-        travelItem.transport_mode = r.mode;
-        if (delta) {
-          updated.schedule.slice(travelIndex + 1).forEach((item) => {
-            item.start_time = addMinutes(item.start_time, delta);
-            item.end_time = addMinutes(item.end_time, delta);
-          });
-        }
-      }
-
-      const baseSummary = updated.base_summary || updated.summary;
-      const lastSchedule = updated.schedule[updated.schedule.length - 1];
-      updated.summary = lastSchedule
-        ? `${baseSummary.replace(/\d{2}:\d{2}\s*前结束/, `${lastSchedule.end_time} 前结束`)} 当前交通已选择${modeLabel(r.mode)}。`
-        : `${baseSummary} 当前交通已选择${modeLabel(r.mode)}。`;
-
+      selectRoute(updated, mode);
       onRouteChange(updated);
     },
-    [plan, route, onRouteChange],
+    [plan, onRouteChange],
   );
 
   const handleStartTimeEdit = useCallback(
@@ -162,6 +135,8 @@ export function ProposalView({ plan, onEdit, onConfirm, onRouteChange, onPlanUpd
           <strong>{plan.schedule.length ? plan.schedule[plan.schedule.length - 1].end_time : "-"}</strong>
         </article>
       </section>
+
+      <RouteMap plan={plan} />
 
       <section className={styles.planBoard}>
         <div className={styles.timelineColumn}>

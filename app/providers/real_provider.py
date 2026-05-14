@@ -41,7 +41,7 @@ class OpenStreetMapLocalLifeProvider:
         origin: Coordinates | None = None,
     ) -> list[Restaurant]:
         origin = self._require_origin(origin)
-        payload = self._fetch_overpass(self._restaurant_query(radius_km, origin))
+        payload = self._fetch_overpass(self._restaurant_query(tags, radius_km, origin))
         return self.from_overpass_restaurants_payload(payload, tags, party_size, origin)
 
     def calculate_routes(
@@ -209,22 +209,15 @@ class OpenStreetMapLocalLifeProvider:
             traffic_risk="medium" if str(mode) in {TransportMode.DRIVING.value, TransportMode.RIDE_HAILING.value} else "low",
             walking_minutes=duration_minutes if str(mode) == TransportMode.WALKING.value else min(12, max(3, round(distance_km * 1.8))),
             transfer_count=0,
+            route_geometry=self._route_geometry(payload),
         )
 
     def _activity_query(self, tags: list[str], radius_km: float, origin: Coordinates) -> str:
         filters = self._activity_filters(tags)
         return self._overpass_query(filters, radius_km, origin)
 
-    def _restaurant_query(self, radius_km: float, origin: Coordinates) -> str:
-        filters = [
-            ("amenity", "restaurant"),
-            ("amenity", "cafe"),
-            ("amenity", "fast_food"),
-            ("amenity", "food_court"),
-            ("amenity", "pub"),
-            ("amenity", "bar"),
-        ]
-        return self._overpass_query(filters, radius_km, origin)
+    def _restaurant_query(self, tags: list[str], radius_km: float, origin: Coordinates) -> str:
+        return self._overpass_query(self._restaurant_filters(tags), radius_km, origin)
 
     def _overpass_query(self, filters: list[tuple[str, str]], radius_km: float, origin: Coordinates) -> str:
         radius_m = int(max(1000, radius_km * 1000))
@@ -406,10 +399,68 @@ class OpenStreetMapLocalLifeProvider:
                 ("amenity", "cinema"),
             ],
         }
-        filters = list(base)
+        filters: list[tuple[str, str]] = []
         for tag in tags:
             filters.extend(mapping.get(tag, []))
-        return self._dedupe_filters(filters)
+        if filters:
+            return self._dedupe_filters(filters)
+        return self._dedupe_filters(base)
+
+    def _restaurant_filters(self, tags: list[str]) -> list[tuple[str, str]]:
+        tag_set = set(tags)
+        default = [
+            ("amenity", "restaurant"),
+            ("amenity", "cafe"),
+            ("amenity", "fast_food"),
+            ("amenity", "food_court"),
+            ("amenity", "pub"),
+            ("amenity", "bar"),
+        ]
+        filters: list[tuple[str, str]] = []
+
+        if {"elder", "proper_meal", "light_food", "low_calorie", "清淡", "中餐", "餐厅"} & tag_set:
+            filters.extend(
+                [
+                    ("amenity", "restaurant"),
+                    ("amenity", "food_court"),
+                ]
+            )
+        if {"bestie", "afternoon_tea", "chat_friendly", "咖啡", "甜品", "下午茶"} & tag_set:
+            filters.extend(
+                [
+                    ("amenity", "cafe"),
+                    ("amenity", "restaurant"),
+                    ("amenity", "food_court"),
+                ]
+            )
+        if {"pet", "pet_friendly", "pet_possible", "takeaway_possible", "outdoor", "外带"} & tag_set:
+            filters.extend(
+                [
+                    ("amenity", "restaurant"),
+                    ("amenity", "cafe"),
+                    ("amenity", "fast_food"),
+                    ("amenity", "food_court"),
+                ]
+            )
+        if {"child", "kid_friendly", "friend_group", "colleague", "group_table", "budget_control"} & tag_set:
+            filters.extend(
+                [
+                    ("amenity", "restaurant"),
+                    ("amenity", "food_court"),
+                    ("amenity", "fast_food"),
+                ]
+            )
+        if {"partner", "date", "quiet"} & tag_set:
+            filters.extend(
+                [
+                    ("amenity", "restaurant"),
+                    ("amenity", "cafe"),
+                    ("amenity", "bar"),
+                    ("amenity", "pub"),
+                ]
+            )
+
+        return self._dedupe_filters(filters or default)
 
     def _fetch_overpass(self, query: str) -> dict:
         request = Request(
@@ -429,12 +480,38 @@ class OpenStreetMapLocalLifeProvider:
 
     def _fetch_osrm_route(self, profile: str, origin: Coordinates, destination: Coordinates) -> dict:
         coordinates = f"{origin.lng:.6f},{origin.lat:.6f};{destination.lng:.6f},{destination.lat:.6f}"
-        params = urlencode({"overview": "false", "alternatives": "false", "steps": "false"})
+        params = urlencode(
+            {
+                "overview": "full",
+                "alternatives": "false",
+                "steps": "false",
+                "geometries": "geojson",
+            }
+        )
         request = Request(
             f"{self.osrm_endpoint}/{profile}/{coordinates}?{params}",
             headers={"Accept": "application/json", "User-Agent": self.user_agent},
         )
         return self._fetch_json_with_retry(request, "OSRM API 路线查询失败。")
+
+    def _route_geometry(self, payload: dict) -> list[Coordinates]:
+        try:
+            raw_coordinates = payload["routes"][0]["geometry"]["coordinates"]
+        except (KeyError, IndexError, TypeError):
+            return []
+        points: list[Coordinates] = []
+        if not isinstance(raw_coordinates, list):
+            return points
+        for item in raw_coordinates:
+            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                continue
+            try:
+                lng = float(item[0])
+                lat = float(item[1])
+            except (TypeError, ValueError):
+                continue
+            points.append(Coordinates(lat=lat, lng=lng))
+        return points
 
     def _fetch_json_with_retry(self, request: Request, error_message: str) -> dict:
         last_error: Exception | None = None
@@ -513,6 +590,8 @@ class OpenStreetMapLocalLifeProvider:
             result.add("proper_meal")
         if amenity == "fast_food":
             result.add("quick_meal")
+        if amenity in {"restaurant", "cafe", "fast_food", "food_court"}:
+            result.add("takeaway_possible")
         if amenity in {"restaurant", "cafe", "food_court"}:
             result.add("elder_friendly")
         if amenity in {"bar", "pub"}:
@@ -543,10 +622,35 @@ class OpenStreetMapLocalLifeProvider:
             )
         ):
             result.add("heavy_food")
+        if any(
+            word in cuisine or word in name
+            for word in (
+                "noodle",
+                "ramen",
+                "lamian",
+                "fast",
+                "quick",
+                "面",
+                "拉面",
+                "扯面",
+                "刀削",
+                "米线",
+                "河粉",
+                "粉",
+                "馄饨",
+                "饺子",
+                "包子",
+                "盖饭",
+                "快餐",
+            )
+        ):
+            result.update({"quick_meal", "casual_meal"})
         if any(word in cuisine or word in name for word in ("japanese", "noodle", "soup", "dumpling", "sushi", "粥", "汤", "蒸")):
             result.add("light_food")
         if self._truthy(tags.get("outdoor_seating")):
             result.update({"outdoor", "pet_possible"})
+        if self._truthy(tags.get("takeaway")):
+            result.add("takeaway_possible")
         if self._truthy(tags.get("dog")) or self._truthy(tags.get("dogs")) or self._truthy(tags.get("pets")):
             result.update({"pet_friendly", "pet_possible", "outdoor"})
         return result

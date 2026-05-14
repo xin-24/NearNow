@@ -8,6 +8,13 @@
 /api
 ```
 
+OpenAPI 文档：
+
+```text
+Swagger UI: /docs
+OpenAPI JSON: /openapi.json
+```
+
 运行模式：
 
 | 模式 | 说明 |

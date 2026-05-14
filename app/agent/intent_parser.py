@@ -15,7 +15,7 @@ class IntentParser:
     def parse(self, message: str, explicit_participants: list[dict] | None = None) -> PlanningIntent:
         participants = self._parse_participants(message)
         if explicit_participants:
-            participants = self._from_explicit_participants(explicit_participants)
+            participants = self._merge_participants(participants, self._from_explicit_participants(explicit_participants))
 
         preferences = self._parse_preferences(message)
         scenario_tags = self._parse_scenario_tags(message, participants, preferences)
@@ -132,6 +132,7 @@ class IntentParser:
     def _from_explicit_participants(self, values: list[dict]) -> list[ParticipantProfile]:
         participants: list[ParticipantProfile] = []
         for index, item in enumerate(values):
+            relation = self._normalize_relation(item.get("relation", "companion"))
             constraints = [
                 Constraint(
                     type=constraint.get("type", "preference"),
@@ -142,14 +143,91 @@ class IntentParser:
             ]
             participants.append(
                 ParticipantProfile(
-                    id=item.get("id") or f"participant_{index + 1}",
-                    relation=item.get("relation", "companion"),
+                    id=item.get("id") or item.get("name") or f"participant_{index + 1}",
+                    relation=relation,
                     count=int(item.get("count", 1)),
                     age=item.get("age"),
                     constraints=constraints,
                 )
             )
         return participants or [ParticipantProfile(id="self", relation="self")]
+
+    def _merge_participants(
+        self,
+        parsed: list[ParticipantProfile],
+        explicit: list[ParticipantProfile],
+    ) -> list[ParticipantProfile]:
+        merged: list[ParticipantProfile] = []
+        seen: set[str] = set()
+
+        def add(participant: ParticipantProfile) -> None:
+            relation = self._normalize_relation(participant.relation)
+            participant.relation = relation
+            key = "self" if relation == "self" else (participant.id or relation)
+            if key in seen:
+                return
+            seen.add(key)
+            merged.append(participant)
+
+        for participant in parsed:
+            add(participant)
+        for participant in explicit:
+            add(participant)
+        return merged or [ParticipantProfile(id="self", relation="self")]
+
+    def _normalize_relation(self, value: object) -> str:
+        relation = str(value or "").strip().lower()
+        mapping = {
+            "我": "self",
+            "自己": "self",
+            "self": "self",
+            "老婆": "spouse",
+            "妻子": "spouse",
+            "老公": "spouse",
+            "丈夫": "spouse",
+            "爱人": "spouse",
+            "伴侣": "spouse",
+            "spouse": "spouse",
+            "恋人": "partner",
+            "对象": "partner",
+            "男朋友": "partner",
+            "女朋友": "partner",
+            "partner": "partner",
+            "约会对象": "partner",
+            "闺蜜": "bestie",
+            "姐妹": "bestie",
+            "bestie": "bestie",
+            "孩子": "child",
+            "小孩": "child",
+            "儿童": "child",
+            "宝宝": "child",
+            "娃": "child",
+            "child": "child",
+            "朋友": "friend_group",
+            "好友": "friend_group",
+            "哥们": "friend_group",
+            "同学": "friend_group",
+            "friend": "friend_group",
+            "friends": "friend_group",
+            "friend_group": "friend_group",
+            "狗": "pet",
+            "猫": "pet",
+            "宠物": "pet",
+            "毛孩子": "pet",
+            "pet": "pet",
+            "爸妈": "elder",
+            "父母": "elder",
+            "爸爸": "elder",
+            "妈妈": "elder",
+            "老人": "elder",
+            "长辈": "elder",
+            "elder": "elder",
+            "同事": "colleague",
+            "colleague": "colleague",
+            "客户": "client",
+            "client": "client",
+        }
+        return mapping.get(relation, relation or "companion")
 
     def _parse_preferences(self, message: str) -> list[str]:
         preferences: list[str] = []

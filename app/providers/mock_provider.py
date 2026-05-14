@@ -204,15 +204,19 @@ class MockLocalLifeProvider:
         for mode in modes:
             mode_value = str(mode)
             if mode_value == TransportMode.WALKING.value:
-                options.append(self._route(origin_name, destination_name, mode, distance, 13.0, 0, 0.62, walking=True))
+                options.append(
+                    self._route(origin_name, destination_name, origin, destination, mode, distance, 13.0, 0, 0.62, walking=True)
+                )
             elif mode_value == TransportMode.DRIVING.value:
-                options.append(self._route(origin_name, destination_name, mode, distance, 3.8, 18, 0.86))
+                options.append(self._route(origin_name, destination_name, origin, destination, mode, distance, 3.8, 18, 0.86))
             elif mode_value == TransportMode.PUBLIC_TRANSIT.value:
-                options.append(self._route(origin_name, destination_name, mode, distance, 5.8, 6, 0.67, transfers=1))
+                options.append(
+                    self._route(origin_name, destination_name, origin, destination, mode, distance, 5.8, 6, 0.67, transfers=1)
+                )
             elif mode_value == TransportMode.RIDE_HAILING.value:
-                options.append(self._route(origin_name, destination_name, mode, distance, 4.0, 28, 0.9))
+                options.append(self._route(origin_name, destination_name, origin, destination, mode, distance, 4.0, 28, 0.9))
             elif mode_value == TransportMode.CYCLING.value:
-                options.append(self._route(origin_name, destination_name, mode, distance, 7.0, 0, 0.58))
+                options.append(self._route(origin_name, destination_name, origin, destination, mode, distance, 7.0, 0, 0.58))
         return options
 
     def book_activity(self, activity_id: str, payload: dict) -> dict:
@@ -236,6 +240,8 @@ class MockLocalLifeProvider:
         self,
         from_name: str,
         to_name: str,
+        origin: Coordinates,
+        destination: Coordinates,
         mode: str,
         distance_km: float,
         minutes_per_km: float,
@@ -257,4 +263,5 @@ class MockLocalLifeProvider:
             traffic_risk="medium" if str(mode) == TransportMode.DRIVING.value else "low",
             walking_minutes=duration if walking else min(12, max(3, round(distance_km * 1.8))),
             transfer_count=transfers,
+            route_geometry=[origin, destination],
         )

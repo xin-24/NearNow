@@ -5,7 +5,8 @@
 后端：
 
 - Python 3.11+
-- 标准库 `http.server`（无 Flask / FastAPI 依赖）
+- FastAPI + Uvicorn
+- FastAPI 中间件：访问日志、统一异常响应、CORS、Cookie 会话鉴权
 - `mysql-connector-python`（可选，MySQL 存储）
 
 前端：
@@ -23,7 +24,7 @@
 
 ```text
 app/
-├── main.py                  HTTP 服务入口（ThreadingHTTPServer）
+├── main.py                  FastAPI 服务入口、路由、中间件、OpenAPI
 ├── auth.py                  登录/注册/会话认证
 ├── agent/                   Agent 核心编排
 │   ├── orchestrator.py      plan() / confirm() 生命周期
@@ -107,9 +108,12 @@ docs/                        文档
 ### 后端
 
 ```bash
-python3 -m app.main          # 启动 HTTP 服务 :8000
-python3 -m cli.main "query"  # 命令行测试
-python3 -m unittest          # 运行测试
+python3 -m venv .venv        # 创建项目虚拟环境
+source .venv/bin/activate    # 启用虚拟环境
+python -m pip install -e .   # 安装 FastAPI / Uvicorn / MySQL 驱动
+python -m app.main           # 启动 HTTP 服务 :8000
+python -m cli.main "query"   # 命令行测试
+python -m unittest           # 运行测试
 ```
 
 ### 前端
@@ -124,16 +128,18 @@ npx tsc --noEmit             # TypeScript 类型检查
 
 ### 开发模式工作流
 
-1. 终端 A：`python3 -m app.main`（后端 :8000）
+1. 终端 A：`source .venv/bin/activate && python -m app.main`（后端 :8000）
 2. 终端 B：`cd web && npm run dev`（前端 :3000）
 3. 浏览器打开 `http://localhost:3000`
 4. Vite 自动代理 `/api/*` 到后端
+5. FastAPI 文档：`http://127.0.0.1:8000/docs`
 
 ### 生产模式
 
 ```bash
 cd web && npm run build
-python3 -m app.main
+source .venv/bin/activate
+python -m app.main
 # 浏览器打开 http://127.0.0.1:8000
 ```
 

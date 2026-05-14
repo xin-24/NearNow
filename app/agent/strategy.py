@@ -49,14 +49,14 @@ class PersonaStrategyBuilder:
                 name="pet_outdoor_confirmed_plan",
                 summary="携宠时活动必须宠物友好，餐厅优先明确可携宠或户外座位，并把确认宠物政策作为风险。",
                 activity_focus=["公园", "狗公园", "户外低强度活动"],
-                restaurant_focus=["宠物友好餐厅", "户外座位", "到店前确认"],
+                restaurant_focus=["宠物友好餐厅", "户外座位", "可外带餐厅", "到店前确认"],
                 preferred_activity_tags=["pet_friendly", "outdoor", "low_walking"],
-                preferred_restaurant_tags=["pet_friendly", "pet_possible", "outdoor"],
+                preferred_restaurant_tags=["pet_friendly", "pet_possible", "outdoor", "takeaway_possible"],
                 avoid_activity_categories=["amenity:cinema", "amenity:theatre", "tourism:gallery"],
-                avoid_restaurant_tags=[],
+                avoid_restaurant_tags=["heavy_food"],
                 hard_constraints=["活动必须宠物友好"],
-                soft_preferences=["减少宠物步行压力", "餐厅宠物政策需确认"],
-                reasoning=["携宠场景不能把普通室内场馆当成可执行方案。"],
+                soft_preferences=["减少宠物步行压力", "餐厅宠物政策需确认", "不确定时推荐外带/打包"],
+                reasoning=["携宠场景不能把普通室内场馆当成活动；餐饮若无可携宠标签，应允许外带兜底而不是直接失败。"],
             )
         elif "bestie" in relations:
             self._merge(
@@ -68,7 +68,7 @@ class PersonaStrategyBuilder:
                 preferred_activity_tags=["bestie", "afternoon_tea", "chat_friendly", "photo_friendly"],
                 preferred_restaurant_tags=["bestie", "afternoon_tea", "chat_friendly", "quiet"],
                 avoid_activity_categories=["amenity:community_centre", "leisure:sports_centre"],
-                avoid_restaurant_tags=["heavy_food"],
+                avoid_restaurant_tags=["heavy_food", "quick_meal"],
                 soft_preferences=["适合拍照", "适合聊天"],
                 reasoning=["用户画像偏向轻松社交和氛围体验。"],
             )

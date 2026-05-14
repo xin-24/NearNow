@@ -80,6 +80,7 @@ export function selectRoute(plan: Plan, mode: string): void {
     travelItem.end_time = addMinutes(travelItem.start_time, route.duration_minutes);
     travelItem.travel_minutes = route.duration_minutes;
     travelItem.transport_mode = route.mode;
+    travelItem.route_geometry = route.route_geometry || travelItem.route_geometry;
     travelItem.reason = routeReason(route.mode);
     if (deltaMinutes) {
       plan.schedule.slice(travelIndex + 1).forEach((item) => {

@@ -506,7 +506,7 @@ BookingProvider
 
 当前实现：
 
-- 后端：Python 3.11+、标准库 `http.server.ThreadingHTTPServer`。
+- 后端：Python 3.11+、FastAPI、Uvicorn；统一错误响应、访问日志、CORS、Cookie 鉴权与 OpenAPI 文档由框架层承载。
 - CLI：argparse。
 - Web UI：React 18、Vite、TypeScript、CSS Modules。
 - 测试：unittest。
