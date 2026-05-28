@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-import re
-from json import JSONDecodeError
 from typing import Any
+
+from app.utils.text import loads_json, unique_strings
 
 from app.domain.models import PlanningIntent, PlanningStrategy, to_plain
 from app.providers.longcat_client import LongCatAPIError, LongCatClient
@@ -111,14 +111,14 @@ class PersonaStrategyBuilder:
                 reasoning=["多人方案不能只挑最近小店，要考虑容量和集合成本。"],
             )
 
-        strategy.preferred_activity_tags = self._unique(strategy.preferred_activity_tags)
-        strategy.preferred_restaurant_tags = self._unique(strategy.preferred_restaurant_tags)
-        strategy.avoid_activity_categories = self._unique(strategy.avoid_activity_categories)
-        strategy.avoid_restaurant_tags = self._unique(strategy.avoid_restaurant_tags)
-        strategy.hard_constraints = self._unique(strategy.hard_constraints)
-        strategy.soft_preferences = self._unique(strategy.soft_preferences)
-        strategy.search_keywords = self._unique(strategy.search_keywords)
-        strategy.reasoning = self._unique(strategy.reasoning)
+        strategy.preferred_activity_tags = unique_strings(strategy.preferred_activity_tags)
+        strategy.preferred_restaurant_tags = unique_strings(strategy.preferred_restaurant_tags)
+        strategy.avoid_activity_categories = unique_strings(strategy.avoid_activity_categories)
+        strategy.avoid_restaurant_tags = unique_strings(strategy.avoid_restaurant_tags)
+        strategy.hard_constraints = unique_strings(strategy.hard_constraints)
+        strategy.soft_preferences = unique_strings(strategy.soft_preferences)
+        strategy.search_keywords = unique_strings(strategy.search_keywords)
+        strategy.reasoning = unique_strings(strategy.reasoning)
         return strategy
 
     def _merge(
@@ -149,13 +149,6 @@ class PersonaStrategyBuilder:
         strategy.soft_preferences.extend(soft_preferences or [])
         strategy.reasoning.extend(reasoning or [])
 
-    def _unique(self, values: list[str]) -> list[str]:
-        result: list[str] = []
-        for value in values:
-            cleaned = " ".join(str(value or "").split())
-            if cleaned and cleaned not in result:
-                result.append(cleaned)
-        return result
 
 
 class LongCatStrategyBuilder:
@@ -168,7 +161,7 @@ class LongCatStrategyBuilder:
     def build(self, intent: PlanningIntent) -> PlanningStrategy:
         fallback_strategy = self.fallback.build(intent)
         if not self.client.is_configured:
-            raise LongCatAPIError("LONGCAT_API_KEY is not configured")
+            return fallback_strategy
 
         try:
             content = self.client.chat(
@@ -182,11 +175,11 @@ class LongCatStrategyBuilder:
                 max_tokens=1200,
                 temperature=0.2,
             )
-            return self._merge_strategy(fallback_strategy, self._loads_json(content))
+            return self._merge_strategy(fallback_strategy, loads_json(content, "strategy"))
         except LongCatAPIError:
-            raise
-        except (TypeError, ValueError, KeyError) as exc:
-            raise LongCatAPIError("LongCat strategy planning failed") from exc
+            return fallback_strategy
+        except (TypeError, ValueError, KeyError):
+            return fallback_strategy
 
     def _prompt(self, intent: PlanningIntent, fallback_strategy: PlanningStrategy) -> str:
         return json.dumps(
@@ -227,18 +220,6 @@ class LongCatStrategyBuilder:
             },
             ensure_ascii=False,
         )
-
-    def _loads_json(self, content: str) -> dict[str, Any]:
-        try:
-            value = json.loads(content)
-        except JSONDecodeError:
-            match = re.search(r"\{.*\}", content, re.DOTALL)
-            if not match:
-                raise ValueError("LongCat strategy response did not include JSON")
-            value = json.loads(match.group(0))
-        if not isinstance(value, dict):
-            raise ValueError("LongCat strategy response must be an object")
-        return value
 
     def _merge_strategy(self, fallback: PlanningStrategy, data: dict[str, Any]) -> PlanningStrategy:
         return PlanningStrategy(

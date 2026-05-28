@@ -5,7 +5,7 @@ import { ChipList } from "../components/ChipList";
 import { RouteSelector } from "../components/RouteSelector";
 import { RouteMap } from "../components/RouteMap";
 import { modeLabel, actionTypeLabel } from "../utils/labels";
-import { selectedRoute, inferPartySize, preparePlanForRouteEditing, selectRoute } from "../utils/route";
+import { selectedRoute, inferPartySize, preparePlanForRouteEditing, selectRoute, addMinutes } from "../utils/route";
 import styles from "./ProposalView.module.css";
 
 interface Props {
@@ -246,13 +246,6 @@ function buildPlanOptions(plan: Plan) {
       plan: item.plan,
     })),
   ];
-}
-
-function addMinutes(timeText: string, minutes: number): string {
-  const [hour, minute] = String(timeText || "00:00").split(":").map((v) => Number.parseInt(v, 10));
-  const date = new Date(2000, 0, 1, Number.isFinite(hour) ? hour : 0, Number.isFinite(minute) ? minute : 0);
-  date.setMinutes(date.getMinutes() + minutes);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 function minutesDiff(a: string, b: string): number {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 
 from app.agent.candidate_selector import LongCatCandidateSelector
@@ -16,9 +17,8 @@ from app.domain.enums import RunMode
 from app.domain.models import ExecutionResult, Plan
 from app.providers.base import LocalLifeProvider, ProviderAPIError
 from app.providers.longcat_client import LongCatAPIError, LongCatClient
-from app.providers.location_provider import OpenStreetMapLocationProvider
+from app.providers.amap_provider import AmapLocalLifeProvider, AmapLocationProvider
 from app.providers.mock_provider import MockLocalLifeProvider
-from app.providers.real_provider import OpenStreetMapLocalLifeProvider
 from app.utils.time_utils import add_minutes
 
 
@@ -42,8 +42,8 @@ class LocalPlannerAgent:
     def __init__(self, llm_client: LongCatClient | None = None, default_mode: str | None = None) -> None:
         self.default_mode = default_mode or os.getenv("NEARNOW_PROVIDER_MODE", RunMode.REAL.value)
         self.mock_provider = MockLocalLifeProvider()
-        self.real_provider = OpenStreetMapLocalLifeProvider()
-        self.location_provider = OpenStreetMapLocationProvider()
+        self.real_provider = AmapLocalLifeProvider()
+        self.location_provider = AmapLocationProvider()
         self.provider = self._provider_for_mode(self.default_mode)
         self.llm_client = llm_client or LongCatClient.from_env()
         fallback_parser = IntentParser()
@@ -253,6 +253,8 @@ class LocalPlannerAgent:
         }
 
     def _longcat_error(self, error: LongCatAPIError) -> dict:
+        logger = logging.getLogger("nearnow.agent")
+        logger.warning("LongCat API error: %s", error)
         message = str(error)
         if "LONGCAT_API_KEY" in message:
             return self._error(
@@ -262,7 +264,7 @@ class LocalPlannerAgent:
             )
         return self._error(
             "LONGCAT_API_ERROR",
-            "LongCat API 调用失败，请稍后重试或检查模型服务配置。",
+            f"LongCat API 调用失败: {message}",
             True,
         )
 

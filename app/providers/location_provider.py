@@ -4,12 +4,12 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from json import JSONDecodeError
-from math import atan2, cos, radians, sin, sqrt
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.domain.models import Coordinates
+from app.utils.geo import distance_km
 
 
 @dataclass
@@ -47,9 +47,9 @@ class MockLocationProvider:
     def reverse_geocode(self, coordinates: Coordinates) -> ApproximateAddress:
         city, district, landmark, area_coordinates = min(
             self.known_areas,
-            key=lambda item: self._distance_km(coordinates, item[3]),
+            key=lambda item: distance_km(coordinates, item[3]),
         )
-        distance = self._distance_km(coordinates, area_coordinates)
+        distance = distance_km(coordinates, area_coordinates)
         if distance > 80:
             city = "定位城市"
             district = "附近区域"
@@ -77,15 +77,6 @@ class MockLocationProvider:
             return "medium"
         return "low"
 
-    def _distance_km(self, origin: Coordinates, destination: Coordinates) -> float:
-        earth_radius_km = 6371.0
-        lat_1 = radians(origin.lat)
-        lat_2 = radians(destination.lat)
-        delta_lat = radians(destination.lat - origin.lat)
-        delta_lng = radians(destination.lng - origin.lng)
-        a = sin(delta_lat / 2) ** 2 + cos(lat_1) * cos(lat_2) * sin(delta_lng / 2) ** 2
-        c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        return earth_radius_km * c
 
 
 class OpenStreetMapLocationProvider:

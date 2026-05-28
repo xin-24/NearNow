@@ -49,9 +49,10 @@ Provider Layer 需要支持三种模式：
 当前代码状态：
 
 - `real` 模式默认用于 Web UI。
-- Geo Provider：OpenStreetMap Nominatim，支持浏览器粗定位后的逆地理编码，以及手动地址的地理编码。
-- POI / 餐厅 Provider：Overpass API，返回真实地点名称、地址片段、经纬度、OSM Provider ID 和可推断标签。
-- Route Provider：OSRM Route Service，返回真实路线距离和耗时；不支持的交通方式会跳过，若没有任何可用路线则返回错误。
+- Geo Provider：高德地图 Web 服务地理编码 / 逆地理编码，支持浏览器粗定位后的地址反查，以及手动地址的地理编码。
+- POI / 餐厅 Provider：高德地图 Web 服务周边搜索，返回真实地点名称、地址片段、经纬度、高德 POI ID 和可推断标签。
+- Route Provider：高德地图 Web 服务路径规划，返回驾车、网约车、步行、公交和骑行的真实路线距离和耗时；不支持或失败的交通方式会跳过，若没有任何可用路线则返回错误。
+- Web Map：前端使用高德地图 JavaScript API 展示底图、路线折线和地点标记，避免高德路线坐标画在 OSM 底图上产生偏移。JSAPI 安全配置遵循高德官方方案：优先配置 `VITE_AMAP_SERVICE_HOST` 作为 `_AMapSecurityConfig.serviceHost` 代理；没有代理时可配置 `VITE_AMAP_SECURITY_JS_CODE` 作为 `_AMapSecurityConfig.securityJsCode`。
 - Booking / Availability Provider：尚未接入真实商家余位、评分、人均、可订状态；当前真实模式不会伪造这些数据，也不会自动完成真实预约。
 
 ## 3. 真实定位设计
@@ -80,7 +81,7 @@ Provider Layer 需要支持三种模式：
 }
 ```
 
-浏览器定位只能直接给出经纬度，不能直接给出街区或商圈名称。前端拿到粗化后的坐标后，需要调用 `reverse_geocode` Provider，把坐标转换为「城市 + 区/县 + 商圈/地标」格式，再填回出发地输入框。当前实现使用 OpenStreetMap Nominatim 反查真实地址，失败时返回可恢复错误并提示手动输入，不回落到 Mock 地址。用户手动输入地址时，真实模式会先执行地理编码再规划；地理编码失败时直接要求补充更具体地址。
+浏览器定位只能直接给出经纬度，不能直接给出街区或商圈名称。前端拿到粗化后的坐标后，需要调用 `reverse_geocode` Provider，把坐标转换为「城市 + 区/县 + 商圈/地标」格式，再填回出发地输入框。当前实现使用高德地图逆地理编码反查真实地址，失败时返回可恢复错误并提示手动输入，不回落到 Mock 地址。用户手动输入地址时，真实模式会先执行高德地图地理编码再规划；地理编码失败时直接要求补充更具体地址。
 
 ### 3.3 定位失败处理
 
@@ -101,7 +102,7 @@ Provider Layer 需要支持三种模式：
 - 预约平台：适合活动票、场馆预约、餐厅订座。
 - 自有业务数据：适合补充商家标签和活动规则。
 
-当前实现先使用 Overpass API 查询 OSM POI。它适合拿到真实地点名称、粗地址、经纬度和基础标签，但通常不包含餐厅评分、人均价格、实时营业状态和可订状态。因此这些字段不能由模型补造，后续需要接入高德/Google/Yelp/美团等 Merchant Provider。
+当前实现使用高德地图 Web 服务查询 POI。它适合拿到真实地点名称、地址、经纬度、高德 POI ID 和基础分类信息；餐厅评分、人均价格、实时营业状态和可订状态仍不完整，因此这些字段不能由模型补造，后续需要接入美团/大众点评等 Merchant Provider。
 
 ### 4.2 标准地点模型
 

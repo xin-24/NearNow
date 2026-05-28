@@ -79,8 +79,11 @@ class LongCatClient:
         try:
             with urlopen(request, timeout=self.config.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, JSONDecodeError, OSError) as exc:
-            raise LongCatAPIError("LongCat chat completion request failed") from exc
+        except HTTPError as exc:
+            # Avoid chaining the original exception to prevent API key leakage in logs.
+            raise LongCatAPIError(f"LongCat request failed with HTTP {exc.code}") from None
+        except (URLError, TimeoutError, JSONDecodeError, OSError) as exc:
+            raise LongCatAPIError(f"LongCat request failed: {type(exc).__name__}") from None
 
         try:
             content = payload["choices"][0]["message"]["content"]

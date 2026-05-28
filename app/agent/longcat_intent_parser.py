@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import re
-from json import JSONDecodeError
 from typing import Any
+
+from app.utils.text import loads_json
 
 from app.agent.intent_parser import IntentParser
 from app.domain.models import Constraint, ParticipantProfile, PlanningIntent
@@ -20,7 +21,7 @@ class LongCatIntentParser:
     def parse(self, message: str, explicit_participants: list[dict] | None = None) -> PlanningIntent:
         fallback_intent = self.fallback.parse(message, explicit_participants)
         if not self.client.is_configured:
-            raise LongCatAPIError("LONGCAT_API_KEY is not configured")
+            return fallback_intent
 
         try:
             parsed = self.client.chat(
@@ -40,12 +41,12 @@ class LongCatIntentParser:
                 max_tokens=900,
                 temperature=0.1,
             )
-            data = self._loads_json(parsed)
+            data = loads_json(parsed, "intent")
             return self._to_intent(message, data, fallback_intent)
         except LongCatAPIError:
-            raise
-        except (ValueError, TypeError, KeyError) as exc:
-            raise LongCatAPIError("LongCat intent parsing failed") from exc
+            return fallback_intent
+        except (ValueError, TypeError, KeyError):
+            return fallback_intent
 
     def _prompt(self, message: str, fallback_intent: PlanningIntent) -> str:
         return json.dumps(
@@ -103,18 +104,6 @@ class LongCatIntentParser:
             },
             ensure_ascii=False,
         )
-
-    def _loads_json(self, content: str) -> dict[str, Any]:
-        try:
-            value = json.loads(content)
-        except JSONDecodeError:
-            match = re.search(r"\{.*\}", content, re.DOTALL)
-            if not match:
-                raise ValueError("LongCat response did not include JSON")
-            value = json.loads(match.group(0))
-        if not isinstance(value, dict):
-            raise ValueError("LongCat JSON response must be an object")
-        return value
 
     def _to_intent(self, message: str, data: dict[str, Any], fallback: PlanningIntent) -> PlanningIntent:
         participants = self._merge_participants(fallback.participants, self._participants(data.get("participants")))

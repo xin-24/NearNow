@@ -32,6 +32,7 @@
 .card p {
   color: var(--muted);
   line-height: 1.65;
+  white-space: pre-line;
 }
 
 .primaryBtn {

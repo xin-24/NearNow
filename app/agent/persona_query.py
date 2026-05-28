@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from app.agent.context_builder import PlanningContext
 from app.domain.models import Activity, Restaurant
+from app.utils.text import unique_strings
 
 
 @dataclass(frozen=True)
@@ -64,19 +65,11 @@ class PersonaQueryPlanner:
             restaurant_tags.extend(["light_food", "清淡", "轻食"])
 
         return PersonaSearchProfile(
-            activity_tags=self._unique(activity_tags),
-            restaurant_tags=self._unique(restaurant_tags),
+            activity_tags=unique_strings(activity_tags),
+            restaurant_tags=unique_strings(restaurant_tags),
             min_activities=min_activities,
             min_restaurants=min_restaurants,
         )
-
-    def _unique(self, values: list[str]) -> list[str]:
-        result: list[str] = []
-        for value in values:
-            cleaned = " ".join(str(value or "").split())
-            if cleaned and cleaned not in result:
-                result.append(cleaned)
-        return result
 
 
 @dataclass(frozen=True)
@@ -114,7 +107,7 @@ class CandidateQualityGate:
         if self._dominant_activity_category_ratio(activities) >= 0.75 and len(activities) >= 4:
             notes.append("附近活动类型较集中，系统已优先保留不同类型的备选，避免只推荐同类地点。")
 
-        return CandidateQualityReport(notes=self._unique(notes), expanded_radius_km=expanded_radius_km)
+        return CandidateQualityReport(notes=unique_strings(notes, normalize_whitespace=False), expanded_radius_km=expanded_radius_km)
 
     def needs_expansion(
         self,
@@ -140,10 +133,3 @@ class CandidateQualityGate:
         for activity in activities:
             counts[activity.category] = counts.get(activity.category, 0) + 1
         return max(counts.values()) / len(activities)
-
-    def _unique(self, values: list[str]) -> list[str]:
-        result: list[str] = []
-        for value in values:
-            if value and value not in result:
-                result.append(value)
-        return result

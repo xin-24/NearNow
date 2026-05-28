@@ -13,6 +13,7 @@ import { SuccessView } from "./views/SuccessView";
 import { ErrorView } from "./views/ErrorView";
 import { generatePlan, confirmPlan, createAbortController, isAborted } from "./api/client";
 import { parseCompanions, selectedRouteMode, formatCompanionLine } from "./utils/route";
+import { normalizeLocationText, inferCityFromLocation } from "./utils/location";
 import type { Plan, ExecutionResponse } from "./api/types";
 import styles from "./App.module.css";
 
@@ -127,10 +128,6 @@ export function App() {
     abortRef.current = null;
   }, []);
 
-  const handleRouteChange = useCallback((updatedPlan: Plan) => {
-    setPlan(updatedPlan);
-  }, []);
-
   const handlePlanUpdate = useCallback((updatedPlan: Plan) => {
     setPlan(updatedPlan);
   }, []);
@@ -173,7 +170,7 @@ export function App() {
             plan={plan}
             onEdit={handleEdit}
             onConfirm={handleConfirm}
-            onRouteChange={handleRouteChange}
+            onRouteChange={handlePlanUpdate}
             onPlanUpdate={handlePlanUpdate}
           />
         )}
@@ -264,24 +261,4 @@ function splitManualLocation(label: string, cityName: string) {
   const district = districtIndex >= 0 ? tokens[districtIndex] : "";
   const landmark = tokens.filter((_, index) => index !== districtIndex).join(" ");
   return { district, landmark: landmark || rest };
-}
-
-function normalizeLocationText(value: string): string {
-  return String(value ?? "").replace(/[，,、/|]+/g, " ").replace(/\s+/g, " ").trim();
-}
-
-const knownCities = [
-  "北京", "上海", "广州", "深圳", "杭州", "成都", "重庆", "天津",
-  "南京", "苏州", "武汉", "西安", "厦门", "长沙", "郑州", "青岛",
-  "纽约", "旧金山",
-];
-
-function inferCityFromLocation(value: string): string {
-  const location = normalizeLocationText(value);
-  if (!location) return "";
-  const knownCity = knownCities.find((city) => location.startsWith(city));
-  if (knownCity) return knownCity;
-  const cityMatch = location.match(/^([一-龥]{2,8}市)(?:\s|$)/);
-  if (cityMatch) return cityMatch[1].replace(/市$/, "");
-  return "";
 }

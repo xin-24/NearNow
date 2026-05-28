@@ -510,11 +510,12 @@ BookingProvider
 - CLI：argparse。
 - Web UI：React 18、Vite、TypeScript、CSS Modules。
 - 测试：unittest。
-- 数据：内存 Mock 数据（默认）或 MySQL；真实 Provider 使用 Overpass + OSRM + Nominatim。
+- 存储：默认使用内存存储，可切换到 MySQL。
+- Provider：默认规划模式为 `real`，使用高德地图 Web 服务；前端路线地图使用高德 JavaScript API；测试和 CLI 示例可显式使用 `mock`。
 
 后续规划：
 
-- 生产化接入更多真实 Provider（高德/Google/美团），引入缓存层保存 POI、路线和可用性查询结果。
+- 生产化接入更多真实 Provider（美团/大众点评/Google 等），引入缓存层保存 POI、路线和可用性查询结果。
 
 ## 10. 质量要求
 

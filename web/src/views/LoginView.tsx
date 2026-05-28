@@ -15,9 +15,25 @@ export function LoginView({ onLogin }: Props) {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+
+    const trimmedUsername = username.trim();
+    const trimmedPassword = password.trim();
+    if (!trimmedUsername) {
+      setError("请输入账号");
+      return;
+    }
+    if (!trimmedPassword) {
+      setError("请输入密码");
+      return;
+    }
+    if (trimmedPassword.length < 6) {
+      setError("密码至少需要 6 位");
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await onLogin(username, password, displayName);
+      await onLogin(trimmedUsername, trimmedPassword, displayName.trim());
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
     } finally {

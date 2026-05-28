@@ -20,8 +20,9 @@ OpenAPI JSON: /openapi.json
 | 模式 | 说明 |
 | --- | --- |
 | `mock` | 使用本地 Mock Provider，适合 Demo、测试和离线开发 |
-| `real` | 使用真实 Geo、POI、Merchant、Route、Booking Provider |
-| `hybrid` | 优先真实 Provider，失败时使用 Mock 或缓存降级 |
+| `real` | 使用高德地图 Web 服务提供真实 Geo、POI、Route；当前真实商家预约通过跳转链接完成，不伪造真实订座 |
+
+当前接口实现只按 `real` / `mock` 分流：`mode=mock` 使用 Mock Provider，其余值都会归一为 `real`。Web UI 发起规划时固定传 `real`。
 
 响应统一包含：
 
@@ -77,7 +78,7 @@ POST /api/location/reverse-geocode
     "district": "朝阳区",
     "landmark": "星河广场",
     "formatted_address": "北京 朝阳区 星河广场",
-    "source": "osm_nominatim",
+    "source": "amap_geocode",
     "precision": "approximate_area",
     "confidence": "high"
   },

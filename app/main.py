@@ -16,7 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.agent.orchestrator import LocalPlannerAgent
 from app.auth import AuthError, AuthService
 from app.domain.models import Coordinates
-from app.providers.location_provider import OpenStreetMapLocationProvider
+from app.providers.amap_provider import AmapLocationProvider
 from app.storage.repository import AppRepository, StorageError, create_repository
 
 
@@ -27,7 +27,7 @@ SESSION_COOKIE = "nearnow_session"
 REPOSITORY = create_repository()
 AUTH = AuthService(REPOSITORY)
 AGENT = LocalPlannerAgent()
-LOCATION_PROVIDER = OpenStreetMapLocationProvider()
+LOCATION_PROVIDER = AmapLocationProvider()
 
 logger = logging.getLogger("nearnow.api")
 
@@ -234,6 +234,7 @@ def register_routes(api: FastAPI) -> None:
     def plan(payload: PlanRequest, user: dict[str, Any] = Depends(required_user)) -> dict[str, Any]:
         request_payload = model_dump(payload)
         response = AGENT.plan(request_payload)
+        log_business_failure("POST", "/api/agent/plan", response)
         if response.get("success"):
             persist_plan(REPOSITORY, user, request_payload, response["data"])
         return response
@@ -242,6 +243,7 @@ def register_routes(api: FastAPI) -> None:
     def confirm(payload: ConfirmRequest, user: dict[str, Any] = Depends(required_user)) -> dict[str, Any]:
         request_payload = model_dump(payload)
         response = AGENT.confirm(request_payload)
+        log_business_failure("POST", "/api/agent/confirm", response)
         if response.get("success"):
             mark_notifications_ready(REPOSITORY, user, request_payload, response["data"])
         return response
@@ -310,6 +312,20 @@ def mark_notifications_ready(
         user_id=user["user_id"],
         plan_id=str(payload.get("plan_id") or result.get("plan_id") or ""),
         message=str(result.get("final_message") or ""),
+    )
+
+
+def log_business_failure(method: str, path: str, response: dict[str, Any]) -> None:
+    if response.get("success") is not False:
+        return
+    error = response.get("error") if isinstance(response.get("error"), dict) else {}
+    logger.warning(
+        "%s %s business_failed code=%s recoverable=%s message=%s",
+        method,
+        path,
+        error.get("code") or "UNKNOWN",
+        error.get("recoverable"),
+        error.get("message") or "",
     )
 
 

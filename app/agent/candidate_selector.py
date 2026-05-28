@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
-from json import JSONDecodeError
 from typing import Any
+
+from app.utils.text import loads_json
 
 from app.agent.context_builder import PlanningContext
 from app.domain.models import Activity, Restaurant, RouteOption, to_plain
@@ -142,7 +142,7 @@ class LongCatCandidateSelector:
         return options
 
     def _parse_decision(self, content: str, options: list[dict[str, Any]]) -> CandidateDecision:
-        data = self._loads_json(content)
+        data = loads_json(content, "candidate")
         option_id = self._string(data.get("option_id"))
         route_mode = self._string(data.get("route_mode"))
         option = next((item for item in options if item["option_id"] == option_id), None)
@@ -158,18 +158,6 @@ class LongCatCandidateSelector:
             route_mode=route_mode,
             reasoning=self._string_list(data.get("reasoning")),
         )
-
-    def _loads_json(self, content: str) -> dict[str, Any]:
-        try:
-            value = json.loads(content)
-        except JSONDecodeError:
-            match = re.search(r"\{.*\}", content, re.DOTALL)
-            if not match:
-                raise ValueError("LongCat candidate response did not include JSON")
-            value = json.loads(match.group(0))
-        if not isinstance(value, dict):
-            raise ValueError("LongCat candidate response must be an object")
-        return value
 
     def _string_list(self, values: Any) -> list[str]:
         if not isinstance(values, list):

@@ -118,7 +118,6 @@ function TimelineItem({ item, index, isEditing, editTime, onEditTimeChange, onSt
           <span>{typeLabel(item.type)}</span>
           {item.travel_minutes ? <span>{modeLabel(item.transport_mode || "")} · {item.travel_minutes} 分钟</span> : null}
           {item.route_geometry?.length ? <span>{item.route_geometry.length} 个路线点</span> : null}
-          {item.provider ? <span>{item.provider === "osm_overpass" ? "真实地图 POI" : "演示数据"}</span> : null}
         </div>
         <div className={styles.reason}>{item.reason}</div>
       </div>

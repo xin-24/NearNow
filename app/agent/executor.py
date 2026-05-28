@@ -47,4 +47,6 @@ class ExecutionManager:
             return plan.final_message or "当前没有可执行方案。"
         first = plan.schedule[0]
         last = plan.schedule[-1]
-        return f"搞定了，{first.start_time} 出发，先去 {plan.schedule[1].name}，{last.start_time} 到 {last.name}。"
+        if len(plan.schedule) >= 2:
+            return f"搞定了，{first.start_time} 出发，先去 {plan.schedule[1].name}，{last.start_time} 到 {last.name}。"
+        return f"搞定了，{first.start_time} 到 {first.name}。"

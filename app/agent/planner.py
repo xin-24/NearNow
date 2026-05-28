@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 
 from app.agent.candidate_selector import CandidateDecision, CandidateTuple, LongCatCandidateSelector
@@ -13,9 +14,10 @@ from app.domain.models import (
     RouteOption,
     ScheduleItem,
 )
-from app.providers.base import LocalLifeProvider
+from app.providers.base import LocalLifeProvider, ProviderAPIError
 from app.providers.longcat_client import LongCatAPIError
 from app.providers.meituan_link import HandoffLinkBuilder
+from app.utils.geo import distance_km
 from app.utils.ids import next_action_id, next_plan_id
 from app.utils.time_utils import add_minutes
 
@@ -23,6 +25,8 @@ from app.utils.time_utils import add_minutes
 MAX_ROUTE_ACTIVITY_CANDIDATES = 6
 MAX_RESTAURANT_CANDIDATES = 12
 MAX_SELECTOR_CANDIDATES = 8
+MAX_ROUTE_WORKERS = 4
+REAL_MAP_PROVIDERS = {"osm_overpass", "amap"}
 
 
 @dataclass(frozen=True)
@@ -116,18 +120,7 @@ class PlanningEngine:
 
         candidates: list[CandidateTuple] = []
         modes = self._allowed_transport_modes(intent.scenario_tags)
-        for activity in activities:
-            if not self._satisfies_activity_hard_constraints(activity, context):
-                continue
-            routes = self.provider.calculate_routes(
-                context.origin_name,
-                context.origin_coordinates,
-                activity.name,
-                activity.coordinates,
-                modes,
-            )
-            if not routes:
-                continue
+        for activity, routes in self._routes_for_activities(activities, context, modes):
             selected_route = self._select_route(routes, context)
             for restaurant in restaurants:
                 if not self._satisfies_restaurant_hard_constraints(restaurant, context):
@@ -148,10 +141,13 @@ class PlanningEngine:
         selected_candidate = candidates[0]
         selection_reasoning: list[str] = []
         if self.candidate_selector is not None:
-            selector_candidates = self._candidate_selection_pool(candidates, MAX_SELECTOR_CANDIDATES)
-            decision = self.candidate_selector.decide(context, selector_candidates)
-            selected_candidate = self._candidate_from_decision(decision, selector_candidates)
-            selection_reasoning = decision.reasoning
+            try:
+                selector_candidates = self._candidate_selection_pool(candidates, MAX_SELECTOR_CANDIDATES)
+                decision = self.candidate_selector.decide(context, selector_candidates)
+                selected_candidate = self._candidate_from_decision(decision, selector_candidates)
+                selection_reasoning = decision.reasoning
+            except LongCatAPIError:
+                pass  # Fall back to the highest-scored candidate
 
         _, activity, restaurant, selected_route, routes = selected_candidate
         for route in routes:
@@ -182,18 +178,7 @@ class PlanningEngine:
         profile: PersonaSearchProfile,
     ) -> tuple[list[Activity], list[Restaurant], float, float | None]:
         intent = context.intent
-        activities = self.provider.search_activities(
-            search_tags,
-            intent.party_size,
-            intent.radius_km,
-            context.origin_coordinates,
-        )
-        restaurants = self.provider.search_restaurants(
-            search_tags,
-            intent.party_size,
-            intent.radius_km,
-            context.origin_coordinates,
-        )
+        activities, restaurants = self._search_candidate_pair(context, search_tags, intent.radius_km)
 
         if not self.quality_gate.needs_expansion(
             activities,
@@ -208,24 +193,37 @@ class PlanningEngine:
         if expanded_radius <= intent.radius_km:
             return activities, restaurants, intent.radius_km, None
 
-        expanded_activities = self.provider.search_activities(
-            search_tags,
-            intent.party_size,
-            expanded_radius,
-            context.origin_coordinates,
-        )
-        expanded_restaurants = self.provider.search_restaurants(
-            search_tags,
-            intent.party_size,
-            expanded_radius,
-            context.origin_coordinates,
-        )
+        expanded_activities, expanded_restaurants = self._search_candidate_pair(context, search_tags, expanded_radius)
         return (
             self._merge_activities(activities, expanded_activities),
             self._merge_restaurants(restaurants, expanded_restaurants),
             expanded_radius,
             expanded_radius,
         )
+
+    def _search_candidate_pair(
+        self,
+        context: PlanningContext,
+        search_tags: list[str],
+        radius_km: float,
+    ) -> tuple[list[Activity], list[Restaurant]]:
+        intent = context.intent
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            activity_future = executor.submit(
+                self.provider.search_activities,
+                search_tags,
+                intent.party_size,
+                radius_km,
+                context.origin_coordinates,
+            )
+            restaurant_future = executor.submit(
+                self.provider.search_restaurants,
+                search_tags,
+                intent.party_size,
+                radius_km,
+                context.origin_coordinates,
+            )
+            return activity_future.result(), restaurant_future.result()
 
     def _merge_activities(self, first: list[Activity], second: list[Activity]) -> list[Activity]:
         result: list[Activity] = []
@@ -379,7 +377,7 @@ class PlanningEngine:
         route: RouteOption,
         context: PlanningContext,
     ) -> CandidateScoreParts:
-        pair_distance = self._distance_km(activity.coordinates, restaurant.coordinates)
+        pair_distance = distance_km(activity.coordinates, restaurant.coordinates)
         proximity = max(0, 18 - activity.distance_km - restaurant.distance_km - pair_distance)
         return CandidateScoreParts(
             activity=self._activity_score(activity, context),
@@ -688,6 +686,50 @@ class PlanningEngine:
             strategy=context.strategy,
         )
 
+    def _routes_for_activities(
+        self,
+        activities: list[Activity],
+        context: PlanningContext,
+        modes: list[str],
+    ) -> list[tuple[Activity, list[RouteOption]]]:
+        eligible = [
+            activity
+            for activity in activities
+            if self._satisfies_activity_hard_constraints(activity, context)
+        ]
+        if not eligible:
+            return []
+
+        results: list[tuple[int, Activity, list[RouteOption]]] = []
+        failures: list[ProviderAPIError] = []
+        worker_count = min(MAX_ROUTE_WORKERS, len(eligible))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            future_to_activity = {
+                executor.submit(
+                    self.provider.calculate_routes,
+                    context.origin_name,
+                    context.origin_coordinates,
+                    activity.name,
+                    activity.coordinates,
+                    modes,
+                ): (index, activity)
+                for index, activity in enumerate(eligible)
+            }
+            for future in as_completed(future_to_activity):
+                index, activity = future_to_activity[future]
+                try:
+                    routes = future.result()
+                except ProviderAPIError as exc:
+                    failures.append(exc)
+                    continue
+                if routes:
+                    results.append((index, activity, routes))
+
+        if not results and failures:
+            raise failures[0]
+        results.sort(key=lambda item: item[0])
+        return [(activity, routes) for _, activity, routes in results]
+
     def _candidate_from_decision(
         self,
         decision: CandidateDecision,
@@ -710,7 +752,10 @@ class PlanningEngine:
         return left[1].activity_id == right[1].activity_id and left[2].restaurant_id == right[2].restaurant_id
 
     def _supports_restaurant_handoff(self, restaurant: Restaurant) -> bool:
-        return restaurant.provider == "osm_overpass"
+        return self._is_real_map_provider(restaurant.provider)
+
+    def _is_real_map_provider(self, provider: str | None) -> bool:
+        return str(provider or "") in REAL_MAP_PROVIDERS
 
     def _satisfies_activity_hard_constraints(self, activity: Activity, context: PlanningContext) -> bool:
         tags = set(activity.tags)
@@ -902,7 +947,7 @@ class PlanningEngine:
         return penalty
 
     def _pair_score(self, activity: Activity, restaurant: Restaurant, context: PlanningContext) -> float:
-        distance = self._distance_km(activity.coordinates, restaurant.coordinates)
+        distance = distance_km(activity.coordinates, restaurant.coordinates)
         relations = {participant.relation for participant in context.intent.participants}
         score = max(0, 8 - distance)
         if {"elder", "pet"} & relations and distance > 2.5:
@@ -910,11 +955,6 @@ class PlanningEngine:
         if "elder" in relations and distance <= 1.5:
             score += 4
         return score
-
-    def _distance_km(self, start: object, end: object) -> float:
-        lat_delta = abs(start.lat - end.lat) * 111
-        lng_delta = abs(start.lng - end.lng) * 85
-        return lat_delta + lng_delta
 
     def _route_score(self, route: RouteOption, context: PlanningContext) -> float:
         relations = {participant.relation for participant in context.intent.participants}
@@ -951,11 +991,19 @@ class PlanningEngine:
             "colleague": "同事：优先团建容量、预算和交通公平",
             "client": "客户：优先商务氛围、隐私和交通稳定",
         }
-        result = [labels[item.relation] for item in context.intent.participants if item.relation in labels]
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in context.intent.participants:
+            if item.relation not in labels or item.relation in seen:
+                continue
+            seen.add(item.relation)
+            result.append(labels[item.relation])
         return result or ["个人：优先距离、时间和体验平衡"]
 
     def _scenario_text(self, context: PlanningContext) -> str:
-        relations = [item.relation for item in context.intent.participants if item.relation != "self"]
+        relations = list(
+            dict.fromkeys(item.relation for item in context.intent.participants if item.relation != "self")
+        )
         mapping = {
             "child": "亲子需求",
             "spouse": "家庭舒适度",
@@ -997,21 +1045,21 @@ class PlanningEngine:
         return f"活动后用{route.mode}约 {route.duration_minutes} 分钟到餐厅。"
 
     def _activity_reason(self, activity: Activity, context: PlanningContext) -> str:
-        if activity.provider == "osm_overpass":
-            return f"来自真实地图 POI，匹配 {self._scenario_text(context)}；营业状态、容量和是否需要预约需出发前确认。"
+        if self._is_real_map_provider(activity.provider):
+            return f"适合{self._scenario_text(context)}，安排在饭前节奏比较顺。"
         return f"匹配 {self._scenario_text(context)}，并且当前剩余名额可覆盖 {context.intent.party_size} 人。"
 
     def _restaurant_reason(self, restaurant: Restaurant, context: PlanningContext) -> str:
-        if restaurant.provider == "osm_overpass":
+        if self._is_real_map_provider(restaurant.provider):
             if "pet" in context.intent.scenario_tags and not {"pet_friendly", "pet_possible", "outdoor"} & set(restaurant.tags):
-                return f"来自真实地图 POI，未确认可携宠入店；建议作为外带/打包候选，或到店前电话确认后再决定是否堂食。"
+                return "可作为外带/打包候选；带宠堂食前先电话确认。"
             if (
                 "pet" in context.intent.scenario_tags
                 and "pet_possible" in restaurant.tags
                 and "pet_friendly" not in restaurant.tags
             ):
-                return f"来自真实地图 POI，具备户外座位等携宠友好线索；宠物入内和座位规则需到店前电话确认。"
-            return f"来自真实地图 POI，可作为 {context.intent.party_size} 人用餐候选；实时营业、等位和可订状态需到店前确认。"
+                return "有户外座位等携宠线索；带宠堂食前先电话确认。"
+            return f"适合 {context.intent.party_size} 人用餐，和前一站距离合适。"
         return f"可容纳 {context.intent.party_size} 人，等待约 {restaurant.wait_minutes} 分钟，标签匹配当前餐饮和同行者约束。"
 
     def _extension_for(self, context: PlanningContext, activity: Activity) -> dict[str, str]:
@@ -1040,10 +1088,10 @@ class PlanningEngine:
             notes.append("驾车可能受实时路况影响，出发前建议复查路线。")
         if restaurant.wait_minutes:
             notes.append(f"{restaurant.name} 可能需要等待约 {restaurant.wait_minutes} 分钟。")
-        if restaurant.provider == "osm_overpass":
-            notes.append("餐厅来自真实地图 POI；当前未接入实时营业、评分、人均和订座状态，需要出发前复查。")
+        if self._is_real_map_provider(restaurant.provider):
+            notes.append("餐厅营业、等位和预订状态建议出发前复查。")
         if "child" in context.intent.scenario_tags:
-            notes.append("儿童需求已作为强偏好排序；真实地图缺少完整亲子标签时，仍需出发前确认活动适龄性。")
+            notes.append("儿童需求已作为强偏好排序；地点亲子标签不完整时，仍需出发前确认活动适龄性。")
         if "elder" in context.intent.scenario_tags and route.walking_minutes > 10:
             notes.append("老人同行时建议出发前复查步行距离，必要时改用网约车或驾车。")
         if "pet" in context.intent.scenario_tags:

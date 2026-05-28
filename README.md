@@ -22,8 +22,9 @@ nearnow/
 │   ├── domain/                 数据模型与枚举
 │   ├── providers/              外部服务适配层
 │   │   ├── mock_provider.py    Mock 数据
-│   │   ├── real_provider.py    Overpass + OSRM 真实数据
-│   │   ├── location_provider.py  Nominatim 地理编码
+│   │   ├── amap_provider.py    高德地图 Web 服务（地理编码、POI、路线）
+│   │   ├── real_provider.py    OSM/OSRM 旧实现（保留兼容）
+│   │   ├── location_provider.py  Mock / OSM 地址 Provider
 │   │   └── longcat_client.py   LongCat LLM 客户端
 │   ├── storage/                存储层（内存 / MySQL）
 │   └── utils/                  时间、ID 工具
@@ -70,7 +71,7 @@ cd web && npm install && cd ..
 
 # 4. 配置环境变量
 cp .env.local.example .env.local
-# 编辑 .env.local，填入 LONGCAT_API_KEY
+# 编辑 .env.local，填入 LONGCAT_API_KEY、AMAP_WEB_SERVICE_KEY 和 VITE_AMAP_JS_API_KEY
 
 # 5. 启动后端
 python -m app.main
@@ -115,10 +116,16 @@ python -m unittest
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `LONGCAT_API_KEY` | LongCat LLM API Key | 空（未配置时 LLM 增强不可用） |
-| `LONGCAT_BASE_URL` | LongCat API 地址 | `https://api.longcat.chat/openai/v1` |
+| `LONGCAT_API_KEY` | LongCat LLM API Key；未配置或调用失败时会降级到确定性解析、策略和摘要 | 空 |
+| `LONGCAT_BASE_URL` | LongCat API 根地址，客户端会自动追加 `/openai/v1/chat/completions` | `https://api.longcat.chat` |
 | `LONGCAT_MODEL` | 模型名称 | `LongCat-Flash-Chat` |
-| `NEARNOW_PROVIDER_MODE` | `real` / `mock` | `mock` |
+| `LONGCAT_TIMEOUT_SECONDS` | LongCat 请求超时秒数 | `20` |
+| `AMAP_WEB_SERVICE_KEY` | 高德地图 Web 服务 Key；真实地理编码、POI 和路线查询必需 | 空 |
+| `AMAP_DEFAULT_CITY` | 公交路线接口缺少城市上下文时使用的默认城市 | `北京` |
+| `VITE_AMAP_JS_API_KEY` | 高德地图 JavaScript API Key；前端高德底图展示必需 | 空 |
+| `VITE_AMAP_SERVICE_HOST` | 高德 JSAPI 安全代理地址；设置后会作为 `_AMapSecurityConfig.serviceHost` 使用，优先级高于明文安全密钥 | 空 |
+| `VITE_AMAP_SECURITY_JS_CODE` | 高德 JSAPI 安全密钥；未配置 `VITE_AMAP_SERVICE_HOST` 时作为 `_AMapSecurityConfig.securityJsCode` 使用 | 空 |
+| `NEARNOW_PROVIDER_MODE` | `real` / `mock`；Web UI 请求固定使用 `real` | `real` |
 | `NEARNOW_CORS_ORIGINS` | 允许跨域访问的前端地址，逗号分隔 | `http://localhost:3000,http://127.0.0.1:3000` |
 | `NEARNOW_LOG_LEVEL` | 后端日志等级 | `INFO` |
 | `NEARNOW_COOKIE_SECURE` | Cookie 是否仅 HTTPS 传输 | `false` |

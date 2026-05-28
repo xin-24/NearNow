@@ -18,6 +18,7 @@ from app.agent.response_generator import ResponseGenerator
 from app.agent.strategy import LongCatStrategyBuilder, PersonaStrategyBuilder
 from app.domain.models import Activity, Constraint, Coordinates, ParticipantProfile, PlanningIntent, Restaurant, RouteOption, to_plain
 from app.providers.longcat_client import LongCatAPIError, LongCatClient, LongCatConfig, load_env_file
+from app.providers.amap_provider import AmapLocalLifeProvider, AmapLocationProvider
 from app.providers.location_provider import ApproximateAddress, MockLocationProvider, OpenStreetMapLocationProvider
 from app.providers.meituan_link import HandoffLinkBuilder
 from app.providers.mock_provider import MockLocalLifeProvider
@@ -415,6 +416,101 @@ class RealLocalLifeProviderTest(unittest.TestCase):
 
         self.assertIn("quick_meal", restaurants[0].tags)
         self.assertIn("casual_meal", restaurants[0].tags)
+
+
+class AmapProviderTest(unittest.TestCase):
+    def test_amap_regeo_payload_is_formatted_for_single_location_input(self) -> None:
+        address = AmapLocationProvider().from_regeo_payload(
+            {
+                "regeocode": {
+                    "formatted_address": "北京市朝阳区望京街道望京SOHO",
+                    "addressComponent": {
+                        "province": "北京市",
+                        "city": [],
+                        "district": "朝阳区",
+                        "township": "望京街道",
+                    },
+                }
+            },
+            Coordinates(39.9957, 116.4813),
+        )
+
+        self.assertEqual("北京市", address.city)
+        self.assertEqual("朝阳区", address.district)
+        self.assertEqual("望京街道", address.landmark)
+        self.assertEqual("amap_geocode", address.source)
+
+    def test_amap_place_payload_builds_activity_and_restaurant_models(self) -> None:
+        provider = AmapLocalLifeProvider(api_key="test", max_results=5)
+        origin = Coordinates(39.9957, 116.4813)
+
+        activities = provider.from_amap_activity_pois(
+            [
+                {
+                    "id": "B000A1",
+                    "name": "望湖公园",
+                    "type": "风景名胜;公园广场;公园",
+                    "typecode": "110101",
+                    "address": "望京街道",
+                    "location": "116.476,39.991",
+                    "distance": "620",
+                }
+            ],
+            ["pet", "pet_friendly"],
+            2,
+            origin,
+        )
+        self.assertEqual("望湖公园", activities[0].name)
+        self.assertEqual("amap", activities[0].provider)
+        self.assertIn("pet_friendly", activities[0].tags)
+
+        restaurants = provider.from_amap_restaurant_pois(
+            [
+                {
+                    "id": "B000R1",
+                    "name": "松木露台咖啡",
+                    "type": "餐饮服务;咖啡厅;咖啡厅",
+                    "typecode": "050500",
+                    "address": "望京SOHO",
+                    "location": "116.477,39.992",
+                    "distance": "520",
+                    "biz_ext": {"cost": "62"},
+                }
+            ],
+            ["bestie", "pet"],
+            2,
+            origin,
+        )
+        self.assertEqual("松木露台咖啡", restaurants[0].name)
+        self.assertEqual(62, restaurants[0].average_price)
+        self.assertIn("bestie", restaurants[0].tags)
+        self.assertIn("pet_possible", restaurants[0].tags)
+
+    def test_amap_route_payload_builds_route_option(self) -> None:
+        route = AmapLocalLifeProvider(api_key="test")._route_from_v3_path(
+            {
+                "route": {
+                    "paths": [
+                        {
+                            "distance": "3200",
+                            "duration": "720",
+                            "steps": [
+                                {"polyline": "116.480000,39.990000;116.490000,39.995000"},
+                            ],
+                        }
+                    ]
+                }
+            },
+            "出发地",
+            "目的地",
+            "driving",
+        )
+
+        self.assertEqual(12, route.duration_minutes)
+        self.assertEqual(3.2, route.distance_km)
+        self.assertEqual("driving", route.mode)
+        self.assertEqual(2, len(route.route_geometry))
+        self.assertEqual(39.99, route.route_geometry[0].lat)
 
 
 class PlanningRankingTest(unittest.TestCase):
@@ -933,21 +1029,23 @@ class LongCatIntegrationTest(unittest.TestCase):
         response = agent.plan(
             {
                 "message": "下午带狗出去玩，顺便找个能带宠物的地方吃饭。",
+                "mode": "mock",
                 "user_context": USER_CONTEXT,
             }
         )
-        self.assertFalse(response["success"])
-        self.assertEqual("LONGCAT_API_NOT_CONFIGURED", response["error"]["code"])
+        self.assertTrue(response["success"])
+        self.assertIn("plan_id", response["data"])
 
-    def test_agent_returns_error_when_longcat_fails(self) -> None:
+    def test_agent_falls_back_when_longcat_fails(self) -> None:
         response = LocalPlannerAgent(llm_client=RaisingLongCatClient()).plan(
             {
                 "message": "下午带狗出去玩，顺便找个能带宠物的地方吃饭。",
+                "mode": "mock",
                 "user_context": USER_CONTEXT,
             }
         )
-        self.assertFalse(response["success"])
-        self.assertEqual("LONGCAT_API_ERROR", response["error"]["code"])
+        self.assertTrue(response["success"])
+        self.assertIn("plan_id", response["data"])
 
     def test_longcat_intent_parser_accepts_json_response(self) -> None:
         client = StubLongCatClient(
@@ -1020,14 +1118,15 @@ class LongCatIntegrationTest(unittest.TestCase):
         self.assertTrue(planned["success"], planned)
         self.assertEqual("15:00 出发，先活动再吃饭，确认后我来预约。", planned["data"]["final_message"])
 
-    def test_longcat_response_generator_raises_on_error(self) -> None:
+    def test_longcat_response_generator_returns_fallback_on_error(self) -> None:
         generator = LongCatResponseGenerator(ResponseGenerator(), RaisingLongCatClient())
         agent = test_agent()
         context = agent.context_builder.build(IntentParser().parse("下午和恋人约会。"), USER_CONTEXT)
         self.assertNotIsInstance(context, dict)
         plan = agent.planner.generate_plan(context)
-        with self.assertRaises(LongCatAPIError):
-            generator.summarize_plan(plan)
+        result = generator.summarize_plan(plan)
+        self.assertIsInstance(result, str)
+        self.assertTrue(len(result) > 0)
 
 
 class AuthStorageTest(unittest.TestCase):
@@ -1413,6 +1512,7 @@ class LocalPlannerAgentTest(unittest.TestCase):
 
         self.assertNotEqual("需要补充或放宽条件", plan.title)
         self.assertEqual(5, len(plan.schedule))
+        self.assertFalse(any("来自真实地图 POI" in item.reason for item in plan.schedule))
         self.assertTrue(any("儿童需求已作为强偏好" in note for note in plan.risk_notes))
         self.assertTrue(any("POI 数量偏少" in note or "标签较少" in note for note in plan.risk_notes))
 

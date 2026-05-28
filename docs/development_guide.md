@@ -44,8 +44,9 @@ app/
 ├── providers/               外部服务适配层
 │   ├── base.py              LocalLifeProvider Protocol 接口
 │   ├── mock_provider.py     Mock 数据 Provider
-│   ├── real_provider.py     Overpass API + OSRM 真实 Provider
-│   ├── location_provider.py Nominatim 地理编码 / 逆地理编码
+│   ├── amap_provider.py     高德地图 Web 服务 Provider（地理编码、POI、路线）
+│   ├── real_provider.py     OSM/OSRM 旧 Provider（保留兼容）
+│   ├── location_provider.py Mock / OSM 地址 Provider
 │   ├── longcat_client.py    LongCat LLM 客户端
 │   └── meituan_link.py      美团跳转链接生成
 ├── storage/                 存储层
@@ -164,7 +165,7 @@ created
 
 规则模式 (`intent_parser.py`)：中文关键词匹配，提取参与者类型、偏好、时间窗口和距离半径。
 
-LLM 模式 (`longcat_intent_parser.py`)：调用 LongCat API 增强解析，失败时返回错误而非降级。
+LLM 模式 (`longcat_intent_parser.py`)：调用 LongCat API 增强解析；未配置或调用失败时降级到确定性解析结果，避免影响基础规划链路。
 
 ### 5.2 Planning Engine
 
@@ -175,7 +176,7 @@ LLM 模式 (`longcat_intent_parser.py`)：调用 LongCat API 增强解析，失�
 所有外部数据通过 `LocalLifeProvider` Protocol 接口获取，支持 Mock 和 Real 实现切换：
 
 - **Mock**: 内置测试数据
-- **Real**: Overpass API (POI/餐厅) + OSRM (路线) + Nominatim (地理编码)
+- **Real**: 高德地图 Web 服务（地理编码 / 逆地理编码、周边 POI、驾车 / 步行 / 公交 / 骑行路线）
 
 ### 5.4 前端架构
 
@@ -201,11 +202,16 @@ LLM 模式 (`longcat_intent_parser.py`)：调用 LongCat API 增强解析，失�
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `LONGCAT_API_KEY` | LongCat LLM API Key | 空 |
-| `LONGCAT_BASE_URL` | API 地址 | `https://api.longcat.chat/openai/v1` |
+| `LONGCAT_API_KEY` | LongCat LLM API Key；未配置或调用失败时会降级到确定性链路 | 空 |
+| `LONGCAT_BASE_URL` | API 根地址，客户端会自动追加 `/openai/v1/chat/completions` | `https://api.longcat.chat` |
 | `LONGCAT_MODEL` | 模型名 | `LongCat-Flash-Chat` |
-| `LONGCAT_TIMEOUT_SECONDS` | 超时秒数 | `30` |
-| `NEARNOW_PROVIDER_MODE` | `real` / `mock` | `mock` |
+| `LONGCAT_TIMEOUT_SECONDS` | 超时秒数 | `20` |
+| `AMAP_WEB_SERVICE_KEY` | 高德地图 Web 服务 Key；真实地理编码、POI 和路线查询必需 | 空 |
+| `AMAP_DEFAULT_CITY` | 公交路线接口缺少城市上下文时使用的默认城市 | `北京` |
+| `VITE_AMAP_JS_API_KEY` | 高德地图 JavaScript API Key；前端高德底图展示必需 | 空 |
+| `VITE_AMAP_SERVICE_HOST` | 高德 JSAPI 安全代理地址；设置后会作为 `_AMapSecurityConfig.serviceHost` 使用，优先级高于明文安全密钥 | 空 |
+| `VITE_AMAP_SECURITY_JS_CODE` | 高德 JSAPI 安全密钥；未配置 `VITE_AMAP_SERVICE_HOST` 时作为 `_AMapSecurityConfig.securityJsCode` 使用 | 空 |
+| `NEARNOW_PROVIDER_MODE` | `real` / `mock`；Web UI 请求固定使用 `real` | `real` |
 | `NEARNOW_STORAGE_BACKEND` | `memory` / `mysql` | `memory` |
 | `NEARNOW_MYSQL_AUTO_MIGRATE` | 自动建表 | `false` |
 | `MYSQL_HOST` / `PORT` / `DATABASE` / `USER` / `PASSWORD` | MySQL 连接 | - |

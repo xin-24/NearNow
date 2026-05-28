@@ -4,7 +4,7 @@
 
 展示本地短时活动规划与执行 Agent 如何从一句自然语言中完成理解、规划、工具调用、用户确认和自动执行。
 
-Demo 默认使用 Mock Provider。后续真实模式演示需要替换为真实 Geo、POI、Merchant 和 Route Provider，并保证输出真实地理位置、真实店铺名称和真实交通路线。
+当前 Web Demo 默认使用 `real` 模式，依赖 LongCat 和高德地图 Web 服务，输出真实地理位置、真实地点名称和真实交通路线。CLI 示例和单元测试可显式使用 Mock Provider，适合离线演示规则链路。
 
 ## 2. 正常场景
 

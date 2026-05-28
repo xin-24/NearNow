@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from json import JSONDecodeError
-from math import atan2, ceil, cos, radians, sin, sqrt
+from math import ceil
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 from app.domain.enums import TransportMode
 from app.domain.models import Activity, Coordinates, Restaurant, RouteOption
 from app.providers.base import ProviderAPIError
+from app.utils.geo import distance_km
 
 
 class OpenStreetMapLocalLifeProvider:
@@ -114,7 +115,7 @@ class OpenStreetMapLocalLifeProvider:
             seen.add(place_id)
 
             coordinates = place["coordinates"]
-            distance = self._distance_km(origin, coordinates)
+            distance = distance_km(origin, coordinates)
             item_tags = self._activity_tags(tags, scenario_tags)
             activities.append(
                 Activity(
@@ -166,7 +167,7 @@ class OpenStreetMapLocalLifeProvider:
                     name=name,
                     location=self._location(tags, name),
                     coordinates=coordinates,
-                    distance_km=round(self._distance_km(origin, coordinates), 2),
+                    distance_km=round(distance_km(origin, coordinates), 2),
                     available=True,
                     table_size=max(6, party_size),
                     wait_minutes=0,
@@ -792,12 +793,3 @@ class OpenStreetMapLocalLifeProvider:
 
     def _clean(self, value: object) -> str:
         return " ".join(str(value or "").split()).strip()
-
-    def _distance_km(self, origin: Coordinates, destination: Coordinates) -> float:
-        earth_radius_km = 6371.0
-        lat_1 = radians(origin.lat)
-        lat_2 = radians(destination.lat)
-        delta_lat = radians(destination.lat - origin.lat)
-        delta_lng = radians(destination.lng - origin.lng)
-        a = sin(delta_lat / 2) ** 2 + cos(lat_1) * cos(lat_2) * sin(delta_lng / 2) ** 2
-        return earth_radius_km * 2 * atan2(sqrt(a), sqrt(1 - a))
