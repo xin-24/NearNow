@@ -153,11 +153,13 @@ class LocalPlannerAgent:
         return True
 
     def _sync_pending_action_times(self, plan: Plan) -> None:
-        activity = next((item for item in plan.schedule if item.type == "activity"), None)
+        activity_items = [item for item in plan.schedule if item.type == "activity"]
         restaurant = next((item for item in plan.schedule if item.type == "restaurant"), None)
+        activity_idx = 0
         for action in plan.pending_actions:
-            if action.type == "book_activity" and activity:
-                action.payload["start_time"] = activity.start_time
+            if action.type == "book_activity" and activity_idx < len(activity_items):
+                action.payload["start_time"] = activity_items[activity_idx].start_time
+                activity_idx += 1
             if action.type == "reserve_restaurant" and restaurant:
                 action.payload["arrival_time"] = restaurant.start_time
 

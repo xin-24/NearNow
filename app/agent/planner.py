@@ -22,11 +22,16 @@ from app.utils.ids import next_action_id, next_plan_id
 from app.utils.time_utils import add_minutes
 
 
-MAX_ROUTE_ACTIVITY_CANDIDATES = 6
+MAX_ROUTE_ACTIVITY_CANDIDATES = 8
 MAX_RESTAURANT_CANDIDATES = 12
 MAX_SELECTOR_CANDIDATES = 8
 MAX_ROUTE_WORKERS = 4
 REAL_MAP_PROVIDERS = {"osm_overpass", "amap"}
+
+MEAL_BUDGET_MINUTES = 55
+AVG_ACTIVITY_MINUTES = 80
+AVG_TRAVEL_MINUTES = 12
+MAX_CHAIN_LENGTH = 3
 
 
 @dataclass(frozen=True)
@@ -138,20 +143,52 @@ class PlanningEngine:
             return self._fallback_plan(context, activities, restaurants, quality_report)
 
         candidates.sort(key=lambda item: item[0], reverse=True)
+
+        budget_minutes = self._time_budget_minutes(context)
+        chain = self._select_activity_chain(activities, context, budget_minutes)
+        if not chain:
+            chain = [candidates[0][1]]
+
+        restaurant = self._select_restaurant_for_chain(restaurants, chain[-1], context)
+        if not restaurant:
+            restaurant = candidates[0][2]
+
+        first_activity = chain[0]
+        first_activity_routes: list[RouteOption] = []
+        for candidate in candidates:
+            if candidate[1].activity_id == first_activity.activity_id:
+                first_activity_routes = candidate[4]
+                break
+        if not first_activity_routes:
+            try:
+                first_activity_routes = self.provider.calculate_routes(
+                    context.origin_name,
+                    context.origin_coordinates,
+                    first_activity.name,
+                    first_activity.coordinates,
+                    modes,
+                )
+            except ProviderAPIError:
+                return self._fallback_plan(context, activities, restaurants, quality_report)
+        if not first_activity_routes:
+            return self._fallback_plan(context, activities, restaurants, quality_report)
+        origin_route = self._select_route(first_activity_routes, context)
+        for route in first_activity_routes:
+            route.selected = route is origin_route
+
+        inter_routes = self._routes_between_chain(chain, context, modes)
+
         selected_candidate = candidates[0]
         selection_reasoning: list[str] = []
-        if self.candidate_selector is not None:
+        if self.candidate_selector is not None and len(candidates) > 1:
             try:
                 selector_candidates = self._candidate_selection_pool(candidates, MAX_SELECTOR_CANDIDATES)
                 decision = self.candidate_selector.decide(context, selector_candidates)
                 selected_candidate = self._candidate_from_decision(decision, selector_candidates)
                 selection_reasoning = decision.reasoning
             except LongCatAPIError:
-                pass  # Fall back to the highest-scored candidate
+                pass
 
-        _, activity, restaurant, selected_route, routes = selected_candidate
-        for route in routes:
-            route.selected = route is selected_route
         alternatives = self._weighted_alternatives(
             candidates,
             selected_candidate,
@@ -161,10 +198,11 @@ class PlanningEngine:
         )
         return self._build_plan(
             context,
-            activity,
+            chain,
             restaurant,
-            selected_route,
-            routes,
+            origin_route,
+            first_activity_routes,
+            inter_routes,
             alternatives,
             selection_reasoning,
             quality_report,
@@ -244,6 +282,124 @@ class PlanningEngine:
             seen.add(item.restaurant_id)
             result.append(item)
         return result
+
+    def _time_budget_minutes(self, context: PlanningContext) -> int:
+        from datetime import datetime
+        start = datetime.strptime(context.intent.start_time, "%H:%M")
+        end = datetime.strptime(context.intent.end_time, "%H:%M")
+        delta = (end - start).total_seconds() / 60
+        return max(120, min(int(delta), 480))
+
+    def _target_activity_count(self, budget_minutes: int) -> int:
+        remaining = budget_minutes - MEAL_BUDGET_MINUTES
+        count = 0
+        while remaining >= AVG_ACTIVITY_MINUTES + AVG_TRAVEL_MINUTES and count < MAX_CHAIN_LENGTH:
+            remaining -= AVG_ACTIVITY_MINUTES + AVG_TRAVEL_MINUTES
+            count += 1
+        return max(1, count)
+
+    def _select_activity_chain(
+        self,
+        activities: list[Activity],
+        context: PlanningContext,
+        budget_minutes: int,
+    ) -> list[Activity]:
+        if not activities:
+            return []
+        target = self._target_activity_count(budget_minutes)
+        eligible = [a for a in activities if self._satisfies_activity_hard_constraints(a, context)]
+        if not eligible:
+            return []
+
+        scored = sorted(
+            eligible,
+            key=lambda a: self._activity_score(a, context),
+            reverse=True,
+        )
+
+        chain: list[Activity] = [scored[0]]
+        used_ids = {scored[0].activity_id}
+
+        for _ in range(target - 1):
+            best: Activity | None = None
+            best_score = -9999.0
+            for candidate in scored:
+                if candidate.activity_id in used_ids:
+                    continue
+                base_score = self._activity_score(candidate, context)
+                prox = max(0, 10 - distance_km(chain[-1].coordinates, candidate.coordinates))
+                combined = base_score + prox * 1.5
+                est_inter_travel = max(5, round(distance_km(chain[-1].coordinates, candidate.coordinates) * 5))
+                accumulated = sum(a.duration_minutes for a in chain) + est_inter_travel
+                remaining_travel_est = max(5, round(candidate.distance_km * 4))
+                if accumulated + candidate.duration_minutes + remaining_travel_est + MEAL_BUDGET_MINUTES > budget_minutes:
+                    continue
+                if combined > best_score:
+                    best_score = combined
+                    best = candidate
+            if best is None:
+                break
+            chain.append(best)
+            used_ids.add(best.activity_id)
+
+        return chain
+
+    def _select_restaurant_for_chain(
+        self,
+        restaurants: list[Restaurant],
+        last_activity: Activity,
+        context: PlanningContext,
+    ) -> Restaurant | None:
+        eligible = [r for r in restaurants if self._satisfies_restaurant_hard_constraints(r, context)]
+        if not eligible:
+            return None
+
+        def combined_score(r: Restaurant) -> float:
+            quality = self._restaurant_score(r, context)
+            prox = max(0, 10 - distance_km(last_activity.coordinates, r.coordinates))
+            return quality + prox * 1.5
+
+        return max(eligible, key=combined_score)
+
+    def _routes_between_chain(
+        self,
+        chain: list[Activity],
+        context: PlanningContext,
+        modes: list[str],
+    ) -> list[RouteOption]:
+        if len(chain) < 2:
+            return []
+        inter_routes: list[RouteOption] = []
+        for i in range(len(chain) - 1):
+            try:
+                routes = self.provider.calculate_routes(
+                    chain[i].name,
+                    chain[i].coordinates,
+                    chain[i + 1].name,
+                    chain[i + 1].coordinates,
+                    modes,
+                )
+                if routes:
+                    inter_routes.append(self._select_route(routes, context))
+                else:
+                    inter_routes.append(self._fallback_route(chain[i], chain[i + 1]))
+            except ProviderAPIError:
+                inter_routes.append(self._fallback_route(chain[i], chain[i + 1]))
+        return inter_routes
+
+    def _fallback_route(self, origin_activity: Activity, dest_activity: Activity) -> RouteOption:
+        dist = distance_km(origin_activity.coordinates, dest_activity.coordinates)
+        return RouteOption(
+            from_name=origin_activity.name,
+            to_name=dest_activity.name,
+            mode="driving",
+            duration_minutes=max(5, round(dist * 4)),
+            distance_km=round(dist, 1),
+            estimated_cost=15,
+            comfort_score=0.8,
+            kid_friendly_score=0.7,
+            route_geometry=[origin_activity.coordinates, dest_activity.coordinates],
+        )
 
     def _candidate_selection_pool(
         self,
@@ -419,10 +575,11 @@ class PlanningEngine:
         selected_route = next((item for item in route_options if item.selected), route_options[0])
         plan = self._build_plan(
             context,
-            activity,
+            [activity],
             restaurant,
             selected_route,
             route_options,
+            [],
             [],
             [self._alternative_reason(profile, activity, restaurant, route)],
             quality_report,
@@ -499,10 +656,11 @@ class PlanningEngine:
     def _build_plan(
         self,
         context: PlanningContext,
-        activity: Activity,
+        activity_chain: list[Activity],
         restaurant: Restaurant,
-        selected_route: RouteOption,
-        routes: list[RouteOption],
+        origin_route: RouteOption,
+        origin_routes: list[RouteOption],
+        inter_routes: list[RouteOption],
         alternatives: list[dict],
         selection_reasoning: list[str] | None = None,
         quality_report: CandidateQualityReport | None = None,
@@ -510,70 +668,91 @@ class PlanningEngine:
     ) -> Plan:
         intent = context.intent
         start = intent.start_time
-        arrive = add_minutes(start, selected_route.duration_minutes)
-        activity_end = add_minutes(arrive, min(activity.duration_minutes, 90))
-        extension_end = add_minutes(activity_end, 45)
-        restaurant_route = self._select_route(
-            self.provider.calculate_routes(
-                activity.name,
-                activity.coordinates,
-                restaurant.name,
-                restaurant.coordinates,
-                self._allowed_transport_modes(intent.scenario_tags),
-            ),
-            context,
-        )
-        dinner_start = add_minutes(extension_end, restaurant_route.duration_minutes)
-        dinner_end = add_minutes(dinner_start, 50)
+        modes = self._allowed_transport_modes(intent.scenario_tags)
 
-        extension = self._extension_for(context, activity)
-        schedule = [
+        current_time = start
+        schedule: list[ScheduleItem] = []
+        arrive_first = add_minutes(current_time, origin_route.duration_minutes)
+        schedule.append(
             ScheduleItem(
-                start_time=start,
-                end_time=arrive,
+                start_time=current_time,
+                end_time=arrive_first,
                 type="travel",
                 name=f"从{context.origin_name}出发",
                 location=context.origin_name,
-                reason=self._transport_reason(selected_route, context),
-                travel_minutes=selected_route.duration_minutes,
-                transport_mode=selected_route.mode,
-                route_geometry=selected_route.route_geometry,
-            ),
+                reason=self._transport_reason(origin_route, context),
+                travel_minutes=origin_route.duration_minutes,
+                transport_mode=origin_route.mode,
+                route_geometry=origin_route.route_geometry,
+            )
+        )
+        current_time = arrive_first
+
+        for i, activity in enumerate(activity_chain):
+            act_duration = activity.duration_minutes
+            act_end = add_minutes(current_time, act_duration)
+            schedule.append(
+                ScheduleItem(
+                    start_time=current_time,
+                    end_time=act_end,
+                    type="activity",
+                    name=activity.name,
+                    location=activity.location,
+                    reason=self._activity_reason(activity, context),
+                    coordinates=activity.coordinates,
+                    provider=activity.provider,
+                    provider_place_id=activity.provider_place_id,
+                )
+            )
+            current_time = act_end
+
+            if i < len(activity_chain) - 1 and i < len(inter_routes):
+                inter_route = inter_routes[i]
+                next_arrive = add_minutes(current_time, inter_route.duration_minutes)
+                schedule.append(
+                    ScheduleItem(
+                        start_time=current_time,
+                        end_time=next_arrive,
+                        type="travel",
+                        name=f"前往{activity_chain[i + 1].name}",
+                        location=f"{activity.name} → {activity_chain[i + 1].name}",
+                        reason=self._inter_activity_transport_reason(inter_route, context),
+                        travel_minutes=inter_route.duration_minutes,
+                        transport_mode=inter_route.mode,
+                        route_geometry=inter_route.route_geometry,
+                    )
+                )
+                current_time = next_arrive
+
+        try:
+            restaurant_routes = self.provider.calculate_routes(
+                activity_chain[-1].name,
+                activity_chain[-1].coordinates,
+                restaurant.name,
+                restaurant.coordinates,
+                modes,
+            )
+            restaurant_route = self._select_route(restaurant_routes, context) if restaurant_routes else self._fallback_route(activity_chain[-1], restaurant)  # type: ignore[arg-type]
+        except ProviderAPIError:
+            restaurant_route = self._fallback_route(activity_chain[-1], restaurant)  # type: ignore[arg-type]
+
+        rest_arrive = add_minutes(current_time, restaurant_route.duration_minutes)
+        schedule.append(
             ScheduleItem(
-                start_time=arrive,
-                end_time=activity_end,
-                type="activity",
-                name=activity.name,
-                location=activity.location,
-                reason=self._activity_reason(activity, context),
-                coordinates=activity.coordinates,
-                provider=activity.provider,
-                provider_place_id=activity.provider_place_id,
-            ),
-            ScheduleItem(
-                start_time=activity_end,
-                end_time=extension_end,
-                type="activity",
-                name=extension["name"],
-                location=activity.location,
-                reason=extension["reason"],
-                travel_minutes=5,
-                transport_mode="walking",
-                coordinates=activity.coordinates,
-                provider=activity.provider,
-                provider_place_id=activity.provider_place_id,
-            ),
-            ScheduleItem(
-                start_time=extension_end,
-                end_time=dinner_start,
+                start_time=current_time,
+                end_time=rest_arrive,
                 type="travel",
                 name=f"前往{restaurant.name}",
-                location=f"{activity.name} → {restaurant.name}",
+                location=f"{activity_chain[-1].name} → {restaurant.name}",
                 reason=self._meal_transport_reason(restaurant_route, context),
                 travel_minutes=restaurant_route.duration_minutes,
                 transport_mode=restaurant_route.mode,
                 route_geometry=restaurant_route.route_geometry,
-            ),
+            )
+        )
+        dinner_start = rest_arrive
+        dinner_end = add_minutes(dinner_start, 50)
+        schedule.append(
             ScheduleItem(
                 start_time=dinner_start,
                 end_time=dinner_end,
@@ -584,23 +763,27 @@ class PlanningEngine:
                 coordinates=restaurant.coordinates,
                 provider=restaurant.provider,
                 provider_place_id=restaurant.provider_place_id,
-            ),
-        ]
+            )
+        )
 
         pending_actions: list[PendingAction] = []
-        if activity.reservation_required:
-            pending_actions.append(
-                PendingAction(
-                    action_id=next_action_id(),
-                    type="book_activity",
-                    target=activity.name,
-                    payload={
-                        "activity_id": activity.activity_id,
-                        "party_size": intent.party_size,
-                        "start_time": arrive,
-                    },
+        act_arrive = arrive_first
+        for activity in activity_chain:
+            if activity.reservation_required:
+                pending_actions.append(
+                    PendingAction(
+                        action_id=next_action_id(),
+                        type="book_activity",
+                        target=activity.name,
+                        payload={
+                            "activity_id": activity.activity_id,
+                            "party_size": intent.party_size,
+                            "start_time": act_arrive,
+                        },
+                    )
                 )
-            )
+            act_arrive = add_minutes(act_arrive, min(activity.duration_minutes, 90))
+
         if restaurant.reservation_required or self._supports_restaurant_handoff(restaurant):
             payload = {
                 "restaurant_id": restaurant.restaurant_id,
@@ -640,16 +823,17 @@ class PlanningEngine:
         for action in pending_actions:
             action.payload["plan_id"] = plan_id
 
+        activity_names = " → ".join(a.name for a in activity_chain)
         return Plan(
             plan_id=plan_id,
-            title=f"{activity.name} + {restaurant.name}",
-            summary=f"{start} 出发，{dinner_end} 前结束，优先满足{self._scenario_text(context)}，并控制在附近 {search_radius_km or intent.radius_km:g} 公里内。",
+            title=f"{activity_names} + {restaurant.name}",
+            summary=f"{start} 出发，{dinner_end} 前结束，包含 {len(activity_chain)} 个活动，优先满足{self._scenario_text(context)}，并控制在附近 {search_radius_km or intent.radius_km:g} 公里内。",
             participant_summary=self._participant_summary(context),
             schedule=schedule,
-            route_options=routes,
+            route_options=origin_routes,
             pending_actions=pending_actions,
             alternatives=alternatives,
-            risk_notes=self._risk_notes(context, selected_route, restaurant, quality_report),
+            risk_notes=self._risk_notes(context, origin_route, restaurant, quality_report),
             strategy=context.strategy,
             selection_reasoning=selection_reasoning or [],
         )
@@ -1044,6 +1228,15 @@ class PlanningEngine:
         if route.mode == "public_transit":
             return f"活动后公共交通约 {route.duration_minutes} 分钟到餐厅，出发前需复查班次。"
         return f"活动后用{route.mode}约 {route.duration_minutes} 分钟到餐厅。"
+
+    def _inter_activity_transport_reason(self, route: RouteOption, context: PlanningContext) -> str:
+        if route.mode == "walking":
+            return f"步行约 {route.duration_minutes} 分钟到下一个活动点，节奏轻松。"
+        if route.mode == "driving":
+            return f"驾车约 {route.duration_minutes} 分钟前往下一个活动点。"
+        if route.mode == "ride_hailing":
+            return f"网约车约 {route.duration_minutes} 分钟前往下一个活动点。"
+        return f"约 {route.duration_minutes} 分钟到达下一个活动点。"
 
     def _activity_reason(self, activity: Activity, context: PlanningContext) -> str:
         if self._is_real_map_provider(activity.provider):

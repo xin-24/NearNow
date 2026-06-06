@@ -47,6 +47,10 @@ class ExecutionManager:
             return plan.final_message or "当前没有可执行方案。"
         first = plan.schedule[0]
         last = plan.schedule[-1]
+        activities = [item for item in plan.schedule if item.type == "activity"]
+        if len(activities) >= 2:
+            names = "、".join(a.name for a in activities[:3])
+            return f"搞定了，{first.start_time} 出发，先去 {names}，{last.start_time} 到 {last.name}。"
         if len(plan.schedule) >= 2:
             return f"搞定了，{first.start_time} 出发，先去 {plan.schedule[1].name}，{last.start_time} 到 {last.name}。"
         return f"搞定了，{first.start_time} 到 {first.name}。"

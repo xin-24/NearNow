@@ -848,7 +848,7 @@ class PlanningStrategyTest(unittest.TestCase):
         plan = PlanningEngine(PetTakeawayProvider()).generate_plan(context)
 
         self.assertNotEqual("需要补充或放宽条件", plan.title)
-        self.assertEqual(5, len(plan.schedule))
+        self.assertGreaterEqual(len(plan.schedule), 4)
         self.assertTrue(any("打包" in note or "外带" in note for note in plan.risk_notes))
         restaurant_item = next(item for item in plan.schedule if item.type == "restaurant")
         self.assertIn("外带", restaurant_item.reason)
@@ -1538,7 +1538,7 @@ class LocalPlannerAgentTest(unittest.TestCase):
         plan = PlanningEngine(SparseRealTagProvider()).generate_plan(context)
 
         self.assertNotEqual("需要补充或放宽条件", plan.title)
-        self.assertEqual(5, len(plan.schedule))
+        self.assertGreaterEqual(len(plan.schedule), 4)
         self.assertFalse(any("来自真实地图 POI" in item.reason for item in plan.schedule))
         self.assertTrue(any("儿童需求已作为强偏好" in note for note in plan.risk_notes))
         self.assertTrue(any("POI 数量偏少" in note or "标签较少" in note for note in plan.risk_notes))
