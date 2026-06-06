@@ -257,11 +257,16 @@ class MockLocalLifeProvider:
         radius_km: float,
         origin: Coordinates | None = None,
     ) -> list[Activity]:
-        return [
+        eligible = [
             item
             for item in self.activities
             if item.capacity_left >= party_size and item.distance_km <= radius_km
         ]
+        if not tags:
+            return eligible
+        tag_set = set(tags)
+        filtered = [item for item in eligible if set(item.tags) & tag_set]
+        return filtered if filtered else eligible
 
     def search_restaurants(
         self,
@@ -270,11 +275,16 @@ class MockLocalLifeProvider:
         radius_km: float,
         origin: Coordinates | None = None,
     ) -> list[Restaurant]:
-        return [
+        eligible = [
             item
             for item in self.restaurants
             if item.available and item.table_size >= party_size and item.distance_km <= max(radius_km, 1.0)
         ]
+        if not tags:
+            return eligible
+        tag_set = set(tags)
+        filtered = [item for item in eligible if set(item.tags) & tag_set]
+        return filtered if filtered else eligible
 
     def calculate_routes(
         self,
