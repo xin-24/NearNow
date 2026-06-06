@@ -31,14 +31,14 @@ class PersonaQueryPlanner:
         if "elder" in relations:
             activity_tags.extend(["公园", "花园", "商场", "散步", "慢走", "stroll_friendly", "low_walking"])
             restaurant_tags.extend(["proper_meal", "light_food", "elder_friendly", "清淡", "粥", "中餐"])
-            min_activities = 5
-            min_restaurants = 6
+            min_activities = max(min_activities, 5)
+            min_restaurants = max(min_restaurants, 6)
 
         if "pet" in relations:
             activity_tags.extend(["宠物", "遛狗", "狗公园", "公园", "pet_friendly", "outdoor"])
             restaurant_tags.extend(["pet_friendly", "pet_possible", "outdoor", "takeaway_possible", "咖啡", "外带"])
-            min_activities = 3
-            min_restaurants = 5
+            min_activities = max(min_activities, 3)
+            min_restaurants = max(min_restaurants, 5)
 
         if "child" in relations:
             activity_tags.extend(["亲子", "儿童", "游乐场", "公园", "博物馆", "kid_friendly", "child_safe"])
@@ -55,7 +55,7 @@ class PersonaQueryPlanner:
         if "friend_group" in relations or "colleague" in relations:
             activity_tags.extend(["商场", "团建", "运动", "team_building", "group_friendly"])
             restaurant_tags.extend(["group_table", "budget_control", "proper_meal"])
-            min_restaurants = 6
+            min_restaurants = max(min_restaurants, 6)
 
         if "stroll" in preferences:
             activity_tags.extend(["公园", "花园", "商场", "散步", "慢走"])

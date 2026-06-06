@@ -43,7 +43,7 @@ class PersonaStrategyBuilder:
                 soft_preferences=["安静", "可坐下休息", "清淡晚饭"],
                 reasoning=["用户表达了爸妈、附近走走、别太累、晚饭清淡，策略应优先轻松散步和正餐。"],
             )
-        elif "pet" in relations:
+        if "pet" in relations:
             self._merge(
                 strategy,
                 name="pet_outdoor_confirmed_plan",
@@ -58,7 +58,7 @@ class PersonaStrategyBuilder:
                 soft_preferences=["减少宠物步行压力", "餐厅宠物政策需确认", "不确定时推荐外带/打包"],
                 reasoning=["携宠场景不能把普通室内场馆当成活动；餐饮若无可携宠标签，应允许外带兜底而不是直接失败。"],
             )
-        elif "bestie" in relations:
+        if "bestie" in relations:
             self._merge(
                 strategy,
                 name="bestie_chat_photo_plan",
@@ -72,7 +72,7 @@ class PersonaStrategyBuilder:
                 soft_preferences=["适合拍照", "适合聊天"],
                 reasoning=["用户画像偏向轻松社交和氛围体验。"],
             )
-        elif "partner" in relations:
+        if "partner" in relations:
             self._merge(
                 strategy,
                 name="date_atmosphere_plan",
@@ -85,7 +85,7 @@ class PersonaStrategyBuilder:
                 soft_preferences=["仪式感", "低打扰"],
                 reasoning=["约会不应只按距离选最近地点，而要突出氛围。"],
             )
-        elif "child" in relations:
+        if "child" in relations:
             self._merge(
                 strategy,
                 name="family_child_safe_plan",
@@ -98,7 +98,7 @@ class PersonaStrategyBuilder:
                 soft_preferences=["减少换乘", "控制步行"],
                 reasoning=["孩子同行时安全和节奏比纯距离更重要。"],
             )
-        elif "friend_group" in relations or "colleague" in relations:
+        if "friend_group" in relations or "colleague" in relations:
             self._merge(
                 strategy,
                 name="group_social_plan",
