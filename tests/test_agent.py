@@ -512,6 +512,33 @@ class AmapProviderTest(unittest.TestCase):
         self.assertEqual(2, len(route.route_geometry))
         self.assertEqual(39.99, route.route_geometry[0].lat)
 
+    def test_amap_calculate_routes_only_requests_single_driving_route(self) -> None:
+        provider = AmapLocalLifeProvider(api_key="test")
+        requested_modes: list[str] = []
+        expected = RouteOption("出发地", "目的地", "driving", 12, 3.2, 0, 0.8, 0.8)
+
+        def calculate_route(
+            origin_name: str,
+            origin: Coordinates,
+            destination_name: str,
+            destination: Coordinates,
+            mode: str,
+        ) -> RouteOption:
+            requested_modes.append(mode)
+            return expected
+
+        provider._calculate_route = calculate_route
+        routes = provider.calculate_routes(
+            "出发地",
+            Coordinates(39.99, 116.48),
+            "目的地",
+            Coordinates(39.995, 116.49),
+            ["walking", "public_transit", "ride_hailing", "cycling"],
+        )
+
+        self.assertEqual(["driving"], requested_modes)
+        self.assertEqual([expected], routes)
+
 
 class PlanningRankingTest(unittest.TestCase):
     def test_candidate_selection_pool_diversifies_repeated_restaurants(self) -> None:

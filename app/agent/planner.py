@@ -702,7 +702,8 @@ class PlanningEngine:
 
         results: list[tuple[int, Activity, list[RouteOption]]] = []
         failures: list[ProviderAPIError] = []
-        worker_count = min(MAX_ROUTE_WORKERS, len(eligible))
+        provider_worker_limit = getattr(self.provider, "max_route_workers", MAX_ROUTE_WORKERS)
+        worker_count = min(provider_worker_limit, len(eligible))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             future_to_activity = {
                 executor.submit(

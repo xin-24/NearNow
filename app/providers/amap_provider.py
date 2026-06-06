@@ -21,6 +21,7 @@ from app.providers.real_provider import OpenStreetMapLocalLifeProvider
 AMAP_PROVIDER_NAME = "amap"
 AMAP_BASE_URL = "https://restapi.amap.com"
 AMAP_MAX_WORKERS = 2
+AMAP_ROUTE_MODE = TransportMode.DRIVING.value
 AMAP_MAX_RETRIES = 3
 AMAP_RETRY_DELAY_SECONDS = 1.0
 
@@ -34,6 +35,7 @@ class AmapLocalLifeProvider(OpenStreetMapLocalLifeProvider):
     """
 
     provider_name = AMAP_PROVIDER_NAME
+    max_route_workers = 1
 
     def __init__(
         self,
@@ -90,25 +92,13 @@ class AmapLocalLifeProvider(OpenStreetMapLocalLifeProvider):
         destination: Coordinates,
         modes: list[str],
     ) -> list[RouteOption]:
-        options: list[RouteOption] = []
-        failures: list[str] = []
-        with ThreadPoolExecutor(max_workers=min(AMAP_MAX_WORKERS, max(1, len(modes)))) as executor:
-            future_to_mode = {
-                executor.submit(self._calculate_route, origin_name, origin, destination_name, destination, mode): mode
-                for mode in modes
-            }
-            for future in as_completed(future_to_mode):
-                mode = future_to_mode[future]
-                try:
-                    options.append(future.result())
-                except ProviderAPIError as exc:
-                    failures.append(f"{mode}:{exc}")
-
-        if not options:
-            detail = "; ".join(failures[-3:]) or "no supported route mode"
-            raise ProviderAPIError(f"高德地图路线规划失败：{detail}")
-        options.sort(key=lambda item: modes.index(item.mode) if item.mode in modes else len(modes))
-        return options
+        # Keep the first AMap integration focused: one driving route is enough
+        # for the plan timeline and the browser map polyline.
+        try:
+            route = self._calculate_route(origin_name, origin, destination_name, destination, AMAP_ROUTE_MODE)
+        except ProviderAPIError as exc:
+            raise ProviderAPIError(f"高德地图路线规划失败：{AMAP_ROUTE_MODE}:{exc}") from exc
+        return [route]
 
     def from_amap_activity_pois(
         self,
