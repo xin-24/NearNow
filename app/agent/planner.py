@@ -28,10 +28,14 @@ MAX_SELECTOR_CANDIDATES = 8
 MAX_ROUTE_WORKERS = 4
 REAL_MAP_PROVIDERS = {"osm_overpass", "amap"}
 
-MEAL_BUDGET_MINUTES = 55
+MEAL_BUDGET_MINUTES = 45
 AVG_ACTIVITY_MINUTES = 80
 AVG_TRAVEL_MINUTES = 12
 MAX_CHAIN_LENGTH = 3
+MIN_PLAN_DURATION_MINUTES = 240
+MAX_PLAN_DURATION_MINUTES = 360
+DEFAULT_RESTAURANT_MINUTES = 50
+MAX_RESTAURANT_MINUTES = 90
 
 
 @dataclass(frozen=True)
@@ -289,6 +293,24 @@ class PlanningEngine:
         end = datetime.strptime(context.intent.end_time, "%H:%M")
         delta = (end - start).total_seconds() / 60
         return max(120, min(int(delta), 480))
+
+    def _target_plan_duration_minutes(self, context: PlanningContext) -> int:
+        budget = min(self._time_budget_minutes(context), MAX_PLAN_DURATION_MINUTES)
+        if budget < MIN_PLAN_DURATION_MINUTES:
+            return budget
+        return MIN_PLAN_DURATION_MINUTES
+
+    def _duration_between(self, start_time: str, end_time: str) -> int:
+        start = self._minutes_since_midnight(start_time)
+        end = self._minutes_since_midnight(end_time)
+        delta = end - start
+        if delta < 0:
+            delta += 24 * 60
+        return delta
+
+    def _minutes_since_midnight(self, time_text: str) -> int:
+        hour, minute = str(time_text or "00:00").split(":", 1)
+        return int(hour) * 60 + int(minute)
 
     def _target_activity_count(self, budget_minutes: int) -> int:
         remaining = budget_minutes - MEAL_BUDGET_MINUTES
@@ -751,7 +773,14 @@ class PlanningEngine:
             )
         )
         dinner_start = rest_arrive
-        dinner_end = add_minutes(dinner_start, 50)
+        target_plan_end = add_minutes(start, self._target_plan_duration_minutes(context))
+        dinner_minutes = DEFAULT_RESTAURANT_MINUTES
+        base_dinner_end = add_minutes(dinner_start, dinner_minutes)
+        extra_needed = self._duration_between(base_dinner_end, target_plan_end)
+        if extra_needed and self._duration_between(start, base_dinner_end) < self._target_plan_duration_minutes(context):
+            dinner_extra = min(extra_needed, MAX_RESTAURANT_MINUTES - DEFAULT_RESTAURANT_MINUTES)
+            dinner_minutes += dinner_extra
+        dinner_end = add_minutes(dinner_start, dinner_minutes)
         schedule.append(
             ScheduleItem(
                 start_time=dinner_start,
@@ -765,6 +794,7 @@ class PlanningEngine:
                 provider_place_id=restaurant.provider_place_id,
             )
         )
+        final_end = self._append_duration_padding(schedule, context, restaurant, dinner_end, target_plan_end)
 
         pending_actions: list[PendingAction] = []
         act_arrive = arrive_first
@@ -827,7 +857,7 @@ class PlanningEngine:
         return Plan(
             plan_id=plan_id,
             title=f"{activity_names} + {restaurant.name}",
-            summary=f"{start} 出发，{dinner_end} 前结束，包含 {len(activity_chain)} 个活动，优先满足{self._scenario_text(context)}，并控制在附近 {search_radius_km or intent.radius_km:g} 公里内。",
+            summary=f"{start} 出发，{final_end} 前结束，包含 {len(activity_chain)} 个活动，优先满足{self._scenario_text(context)}，并控制在附近 {search_radius_km or intent.radius_km:g} 公里内。",
             participant_summary=self._participant_summary(context),
             schedule=schedule,
             route_options=origin_routes,
@@ -837,6 +867,55 @@ class PlanningEngine:
             strategy=context.strategy,
             selection_reasoning=selection_reasoning or [],
         )
+
+    def _append_duration_padding(
+        self,
+        schedule: list[ScheduleItem],
+        context: PlanningContext,
+        restaurant: Restaurant,
+        current_end: str,
+        target_end: str,
+    ) -> str:
+        if not schedule:
+            return current_end
+        if self._duration_between(schedule[0].start_time, current_end) >= self._target_plan_duration_minutes(context):
+            return current_end
+
+        remaining = self._duration_between(current_end, target_end)
+        if remaining <= 0:
+            return current_end
+
+        schedule.append(
+            ScheduleItem(
+                start_time=current_end,
+                end_time=target_end,
+                type="activity",
+                name=self._wrap_up_activity_name(context),
+                location=restaurant.location,
+                reason=self._wrap_up_activity_reason(context, remaining),
+                coordinates=restaurant.coordinates,
+            )
+        )
+        return target_end
+
+    def _wrap_up_activity_name(self, context: PlanningContext) -> str:
+        tags = set(context.intent.scenario_tags)
+        if "child" in tags:
+            return "餐后亲子轻逛"
+        if "friend_group" in tags:
+            return "餐后周边轻逛"
+        if "elder" in tags:
+            return "餐后短程休息"
+        if "pet" in tags:
+            return "餐后宠物友好散步"
+        return "餐后周边轻逛"
+
+    def _wrap_up_activity_reason(self, context: PlanningContext, minutes: int) -> str:
+        if "child" in context.intent.scenario_tags:
+            return f"用餐后留出约 {minutes} 分钟在餐厅周边轻松收尾，避免亲子行程太赶。"
+        if "elder" in context.intent.scenario_tags:
+            return f"用餐后留出约 {minutes} 分钟短程休息，控制步行强度。"
+        return f"用餐后留出约 {minutes} 分钟周边轻逛和集合缓冲，让整体方案达到 4 小时。"
 
     def _fallback_plan(
         self,

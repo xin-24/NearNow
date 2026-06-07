@@ -1496,6 +1496,17 @@ def test_agent() -> LocalPlannerAgent:
     return LocalPlannerAgent(llm_client=RuleBackedLongCatClient(), default_mode="mock")
 
 
+def schedule_span_minutes(schedule: list[dict]) -> int:
+    def to_minutes(value: str) -> int:
+        hour, minute = value.split(":")
+        return int(hour) * 60 + int(minute)
+
+    if not schedule:
+        return 0
+    delta = to_minutes(schedule[-1]["end_time"]) - to_minutes(schedule[0]["start_time"])
+    return delta if delta >= 0 else delta + 24 * 60
+
+
 class IntentParserTest(unittest.TestCase):
     def test_parses_pet_constraints(self) -> None:
         intent = IntentParser().parse("下午带狗出去玩，顺便找个能带宠物的地方吃饭。")
@@ -1529,6 +1540,29 @@ class IntentParserTest(unittest.TestCase):
 
 
 class LocalPlannerAgentTest(unittest.TestCase):
+    def test_competition_mock_plans_are_at_least_four_hours(self) -> None:
+        agent = LocalPlannerAgent(
+            llm_client=LongCatClient(
+                LongCatConfig(api_key=None, base_url="https://api.longcat.chat", model="LongCat-Flash-Chat")
+            ),
+            default_mode="mock",
+        )
+        messages = [
+            "今天下午想和老婆孩子、朋友出去玩几个小时，别离家太远，老婆最近在减肥，孩子5岁",
+            "今天下午和朋友出去玩，总共4个人，2男2女，安排4-6小时",
+        ]
+
+        for message in messages:
+            with self.subTest(message=message):
+                response = agent.plan({"message": message, "mode": "mock", "user_context": USER_CONTEXT})
+
+                self.assertTrue(response["success"], response)
+                schedule = response["data"]["schedule"]
+                span = schedule_span_minutes(schedule)
+
+                self.assertGreaterEqual(span, 240)
+                self.assertLessEqual(span, 360)
+
     def test_child_constraints_are_preferences_when_real_tags_are_sparse(self) -> None:
         intent = IntentParser().parse("下午和老婆孩子、朋友出去玩几个小时，别离家太远。")
         intent = ParticipantConstraintBuilder().normalize(intent)

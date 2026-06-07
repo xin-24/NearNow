@@ -91,7 +91,7 @@ class MockLocalLifeProvider:
                 distance_km=2.8,
                 duration_minutes=70,
                 capacity_left=15,
-                tags=["group_friendly", "photo_friendly", "indoor", "chat_friendly"],
+                tags=["group_friendly", "photo_friendly", "indoor", "chat_friendly", "kid_friendly"],
                 provider_place_id="mock_activity_creative_002",
             ),
             Activity(
@@ -140,7 +140,7 @@ class MockLocalLifeProvider:
                 distance_km=5.8,
                 duration_minutes=80,
                 capacity_left=8,
-                tags=["group_friendly", "team_building", "indoor", "chat_friendly"],
+                tags=["group_friendly", "team_building", "indoor", "chat_friendly", "kid_friendly"],
                 provider_place_id="mock_activity_game_006",
             ),
             Activity(
