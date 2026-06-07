@@ -285,7 +285,7 @@ Mock 模式：
 - `app/storage/repository.py` 支持内存存储和 MySQL 存储接口。
 - `tests/test_agent.py` 覆盖意图解析、参与者约束、真实 Provider 转换、Amap Provider、规划排序、LongCat 降级、执行管理、认证和存储等路径。
 - 当前验证命令：
-  - `python3 -m unittest`：已通过 60 个测试。
+  - `python3 -m unittest`：已通过 65 个测试。
   - `cd web && npm run build`：已通过生产构建。
 
 ## 比赛需求对照与差距分析
@@ -374,19 +374,24 @@ Mock 模式：
 
 **修复方向**：从 `docs/design.md` 精简出 2 页版本，覆盖 Planning 策略、工具调用链路、异常处理机制。内容应基于实际实现而非设计理想。
 
-### 阻塞 5：备选方案可能与主方案重复 🟡
+### 阻塞 5：备选方案可能与主方案重复 ✅ 已修复
 
 **根因**：`app/agent/planner.py` 第 368 行 `_best_weighted_candidate` 在所有候选耗尽时无条件返回 `ranked[0]`，即使它已在 `used_pairs` 中。
 
-**修复方向**：添加去重检查，确保备选方案的活动+餐厅组合与主方案不同。
+**修复内容**（已完成）：
+
+1. `_best_weighted_candidate()` 不再在所有候选已使用时回退 `ranked[0]`，候选耗尽时返回 `None`。
+2. 备选方案生成时记录已使用的活动+餐厅组合，避免与主方案或其他备选重复。
+3. 备选 plan 不再只包含单活动，而是以备选候选为锚点复用 `_select_activity_chain()` 扩展多活动链，并继续生成独立 `plan_id`、时间轴、预约动作和餐厅动作。
+4. 新增回归测试锁定候选耗尽不重复、备选方案组合不重复、备选时间轴包含多活动且稳定覆盖 4-6 小时。
 
 ## 2026-06-07 新增审查结论与需求
 
 本轮复查命令：
 
-- `python3 -m unittest`：通过 64 个测试。
+- `python3 -m unittest`：通过 65 个测试。
 - `cd web && npm run build`：通过生产构建。
-- 当前未提交改动：`app/agent/planner.py` 将 `MEAL_BUDGET_MINUTES` 从 55 改为 45；`app/providers/mock_provider.py` 为 `创意市集手作体验`、`桌游密室体验馆` 增加 `kid_friendly` 标签；`claude.md` 为未跟踪文件。
+- 本轮 P1 修复涉及：`app/agent/planner.py`、`tests/test_agent.py`、`web/src/utils/route.ts`、`web/src/views/ProposalView.tsx`、`claude.md`。
 
 新增必须修复项：
 
@@ -412,13 +417,15 @@ Mock 模式：
    - 要求：主方案应以 `selected_candidate` 为锚点扩展活动链，或在多活动链维度构造候选并统一评分/选择，避免解释和结果脱节。
    - 修复：`app/agent/planner.py` 现在先确定评分/LongCat 选出的 `selected_candidate`，再以该候选的 activity 作为活动链锚点、以该候选的 restaurant 作为主餐厅扩展时间轴；补活动时同时考虑活动间距离和到选中餐厅的距离。新增测试构造“规则评分第一”和“选择器指定 option_2”不一致的场景，断言主方案使用选择器指定活动和餐厅。
 
-5. **备选方案仍需去重并支持多活动（P1）**
+5. **备选方案仍需去重并支持多活动（P1，已修复）**
    - 现象：`_best_weighted_candidate()` 在所有候选耗尽时仍可能回退 `ranked[0]`；备选 plan 当前只用单活动链，与主方案多活动体验不一致。
    - 要求：备选方案不得与主方案活动+餐厅组合重复；如主方案是多活动，备选也应尽量给出完整 4 小时方案，或明确说明是轻量备选。
+   - 修复：`_best_weighted_candidate()` 候选耗尽时返回 `None`；`_weighted_alternatives()` 持续维护已用组合；`_alternative_payload()` 以备选候选为锚点从完整候选池重建多活动链，生成独立可确认的 4-6 小时备选 plan。新增测试覆盖去重、多活动和时长。
 
-6. **前端多活动编辑同步不足（P1）**
+6. **前端多活动编辑同步不足（P1，已修复）**
    - 现象：`web/src/utils/route.ts` 的 `syncPendingActionTimes()` 只同步第一个活动；`ProposalView.tsx` 删除任一 activity 时会删除所有 `book_activity` 动作。
    - 要求：按 schedule 中 activity 顺序或 `target/provider_place_id` 精确同步和删除对应 action，避免多活动方案确认后执行错误。
+   - 修复：`web/src/utils/route.ts` 新增统一的 action 与 schedule 匹配逻辑，优先按 `provider_place_id/activity_id/restaurant_id`，其次按 `target`，最后按时间轴顺序兜底；同步时跳过餐后缓冲活动。`web/src/views/ProposalView.tsx` 在切换备选、切换交通、手动改时间、删除节点后都会同步 pending action；删除活动或餐厅时只移除对应的单个预约/订座 action。`preparePlanForRouteEditing()` 也移出渲染期，改为初始化可编辑 plan 时执行。验证：`cd web && npm run build` 通过。
 
 7. **设计文档仍是比赛硬缺口（P0）**
    - 现状：`docs/competition_design.md` 不存在。
@@ -503,12 +510,9 @@ Mock 模式：
 
 已完成。详见阻塞 3 修复内容。Mock 数据已增加 7 个新活动（亲子、朋友、老年人等场景），标签过滤已生效。
 
-### 第四步：修复备选方案去重（阻塞 5）
+### 第四步：修复备选方案去重（阻塞 5）✅ 已完成
 
-修改 `app/agent/planner.py` 的 `_best_weighted_candidate()`：
-- 在返回 `ranked[0]` 之前检查是否已在 `used_pairs` 中。
-- 如果已使用，跳过并返回下一个未使用的候选。
-- 如果所有候选都已使用，返回 None 并在调用方处理。
+已完成。详见阻塞 5 修复内容。
 
 ### 第五步：创建比赛设计文档（阻塞 4）
 

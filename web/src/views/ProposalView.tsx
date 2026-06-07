@@ -5,7 +5,15 @@ import { ChipList } from "../components/ChipList";
 import { RouteSelector } from "../components/RouteSelector";
 import { RouteMap } from "../components/RouteMap";
 import { modeLabel, actionTypeLabel } from "../utils/labels";
-import { selectedRoute, inferPartySize, preparePlanForRouteEditing, selectRoute, addMinutes } from "../utils/route";
+import {
+  selectedRoute,
+  inferPartySize,
+  preparePlanForRouteEditing,
+  selectRoute,
+  addMinutes,
+  syncPendingActionTimes,
+  removePendingActionForScheduleItem,
+} from "../utils/route";
 import styles from "./ProposalView.module.css";
 
 interface Props {
@@ -19,17 +27,16 @@ interface Props {
 export function ProposalView({ plan, onEdit, onConfirm, onRouteChange, onPlanUpdate }: Props) {
   const options = useMemo(() => buildPlanOptions(plan), [plan]);
   const [selectedOption, setSelectedOption] = useState(0);
-  const [activePlan, setActivePlan] = useState<Plan>(() => structuredClone(options[0].plan));
+  const [activePlan, setActivePlan] = useState<Plan>(() => editablePlan(options[0].plan));
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editTime, setEditTime] = useState({ start: "", end: "" });
 
   useEffect(() => {
     setSelectedOption(0);
-    setActivePlan(structuredClone(buildPlanOptions(plan)[0].plan));
+    setActivePlan(editablePlan(buildPlanOptions(plan)[0].plan));
     setEditingIndex(null);
   }, [plan.plan_id]);
 
-  preparePlanForRouteEditing(activePlan);
   const route = selectedRoute(activePlan);
 
   const handleOptionSelect = useCallback(
@@ -38,7 +45,7 @@ export function ProposalView({ plan, onEdit, onConfirm, onRouteChange, onPlanUpd
       if (!option) return;
       setSelectedOption(index);
       setEditingIndex(null);
-      setActivePlan(structuredClone(option.plan));
+      setActivePlan(editablePlan(option.plan));
     },
     [options],
   );
@@ -78,6 +85,7 @@ export function ProposalView({ plan, onEdit, onConfirm, onRouteChange, onPlanUpd
         s.end_time = addMinutes(s.end_time, delta);
       });
     }
+    syncPendingActionTimes(updated);
 
     setEditingIndex(null);
     setActivePlan(updated);
@@ -90,14 +98,9 @@ export function ProposalView({ plan, onEdit, onConfirm, onRouteChange, onPlanUpd
     (index: number) => {
       const updated = structuredClone(activePlan);
       const removed = updated.schedule[index];
+      removePendingActionForScheduleItem(updated, removed, updated.schedule);
       updated.schedule.splice(index, 1);
-      if (removed.type === "activity" || removed.type === "restaurant") {
-        updated.pending_actions = updated.pending_actions.filter((a) => {
-          if (removed.type === "activity" && a.type === "book_activity") return a.target !== removed.name;
-          if (removed.type === "restaurant" && a.type === "reserve_restaurant") return a.target !== removed.name;
-          return true;
-        });
-      }
+      syncPendingActionTimes(updated);
       setActivePlan(updated);
       if (selectedOption === 0) {
         onPlanUpdate(updated);
@@ -246,6 +249,13 @@ function buildPlanOptions(plan: Plan) {
       plan: item.plan,
     })),
   ];
+}
+
+function editablePlan(plan: Plan): Plan {
+  const cloned = structuredClone(plan);
+  preparePlanForRouteEditing(cloned);
+  syncPendingActionTimes(cloned);
+  return cloned;
 }
 
 function minutesDiff(a: string, b: string): number {

@@ -1,4 +1,4 @@
-import type { Plan, RouteOption } from "../api/types";
+import type { PendingAction, Plan, RouteOption, ScheduleItem } from "../api/types";
 import { modeLabel, routeReason } from "./labels";
 
 export function selectedRoute(plan: Plan): RouteOption | undefined {
@@ -87,30 +87,118 @@ export function selectRoute(plan: Plan, mode: string): void {
         item.start_time = addMinutes(item.start_time, deltaMinutes);
         item.end_time = addMinutes(item.end_time, deltaMinutes);
       });
-      syncPendingActionTimes(plan);
     }
+    syncPendingActionTimes(plan);
   }
 
   updateRouteRiskNotes(plan, route);
   updateRouteSummary(plan, route);
 }
 
-function syncPendingActionTimes(plan: Plan): void {
-  const activities = plan.schedule.filter((item) => item.type === "activity");
-  const activityByName = new Map(activities.map((item) => [item.name, item]));
-  const restaurant = plan.schedule.find((item) => item.type === "restaurant");
-  let activityIndex = 0;
+export function syncPendingActionTimes(plan: Plan): void {
+  const activities = actionScheduleItems(plan.schedule, "book_activity");
+  const restaurants = actionScheduleItems(plan.schedule, "reserve_restaurant");
+  const usedActivityIndexes = new Set<number>();
+  const usedRestaurantIndexes = new Set<number>();
+
   plan.pending_actions.forEach((action) => {
     if (action.type === "book_activity") {
-      const activity = activityByName.get(action.target) || activities[activityIndex];
-      if (!activity) return;
-      action.payload.start_time = activity.start_time;
-      activityIndex += 1;
+      const matched = findScheduleItemForAction(action, activities, usedActivityIndexes);
+      if (!matched) return;
+      action.payload.start_time = matched.item.start_time;
+      usedActivityIndexes.add(matched.index);
     }
-    if (action.type === "reserve_restaurant" && restaurant) {
-      action.payload.arrival_time = restaurant.start_time;
+    if (action.type === "reserve_restaurant") {
+      const matched = findScheduleItemForAction(action, restaurants, usedRestaurantIndexes);
+      if (!matched) return;
+      action.payload.arrival_time = matched.item.start_time;
+      usedRestaurantIndexes.add(matched.index);
     }
   });
+}
+
+export function removePendingActionForScheduleItem(
+  plan: Plan,
+  removed: ScheduleItem,
+  originalSchedule: ScheduleItem[],
+): void {
+  const actionType = actionTypeForScheduleItem(removed);
+  if (!actionType) return;
+
+  const action = findActionForScheduleItem(
+    plan.pending_actions.filter((item) => item.type === actionType),
+    removed,
+    originalSchedule,
+    actionType,
+  );
+  if (!action) return;
+
+  plan.pending_actions = plan.pending_actions.filter((item) => item.action_id !== action.action_id);
+}
+
+function actionTypeForScheduleItem(item: ScheduleItem): PendingAction["type"] | null {
+  if (item.type === "activity") return "book_activity";
+  if (item.type === "restaurant") return "reserve_restaurant";
+  return null;
+}
+
+function actionScheduleItems(schedule: ScheduleItem[], actionType: PendingAction["type"]): ScheduleItem[] {
+  if (actionType === "book_activity") {
+    return schedule.filter((item) => item.type === "activity" && !isGeneratedWrapUpActivity(item));
+  }
+  if (actionType === "reserve_restaurant") {
+    return schedule.filter((item) => item.type === "restaurant");
+  }
+  return [];
+}
+
+function isGeneratedWrapUpActivity(item: ScheduleItem): boolean {
+  return item.type === "activity" && item.name.startsWith("餐后") && !item.provider && !item.provider_place_id;
+}
+
+function findScheduleItemForAction(
+  action: PendingAction,
+  items: ScheduleItem[],
+  usedIndexes: Set<number>,
+): { item: ScheduleItem; index: number } | null {
+  const identityIndex = items.findIndex((item, index) => !usedIndexes.has(index) && hasSharedPlaceIdentity(action, item));
+  if (identityIndex >= 0) return { item: items[identityIndex], index: identityIndex };
+
+  const targetIndex = items.findIndex((item, index) => !usedIndexes.has(index) && item.name === action.target);
+  if (targetIndex >= 0) return { item: items[targetIndex], index: targetIndex };
+
+  const fallbackIndex = items.findIndex((_, index) => !usedIndexes.has(index));
+  if (fallbackIndex >= 0) return { item: items[fallbackIndex], index: fallbackIndex };
+
+  return null;
+}
+
+function findActionForScheduleItem(
+  actions: PendingAction[],
+  item: ScheduleItem,
+  originalSchedule: ScheduleItem[],
+  actionType: PendingAction["type"],
+): PendingAction | null {
+  const identityMatch = actions.find((action) => hasSharedPlaceIdentity(action, item));
+  if (identityMatch) return identityMatch;
+
+  const orderedItems = actionScheduleItems(originalSchedule, actionType);
+  const itemIndex = orderedItems.indexOf(item);
+  if (itemIndex >= 0 && actions[itemIndex]) return actions[itemIndex];
+
+  return actions.find((action) => action.target === item.name) || null;
+}
+
+function hasSharedPlaceIdentity(action: PendingAction, item: ScheduleItem): boolean {
+  const itemPlaceId = item.provider_place_id || "";
+  if (!itemPlaceId) return false;
+  return actionIdentityValues(action).includes(itemPlaceId);
+}
+
+function actionIdentityValues(action: PendingAction): string[] {
+  return ["provider_place_id", "place_id", "activity_id", "restaurant_id"]
+    .map((key) => action.payload[key])
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
 export function inferPartySize(plan: Plan): string {

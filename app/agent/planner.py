@@ -211,6 +211,7 @@ class PlanningEngine:
             context,
             quality_report,
             search_radius_km,
+            chain,
         )
         return self._build_plan(
             context,
@@ -501,10 +502,15 @@ class PlanningEngine:
         context: PlanningContext,
         quality_report: CandidateQualityReport | None = None,
         search_radius_km: float | None = None,
+        selected_chain: list[Activity] | None = None,
     ) -> list[dict]:
         alternatives: list[dict] = []
-        used_pairs = {self._candidate_pair_key(selected_candidate)}
-        used_activities = {selected_candidate[1].activity_id}
+        selected_activities = selected_chain or [selected_candidate[1]]
+        used_pairs = {
+            (activity.activity_id, selected_candidate[2].restaurant_id)
+            for activity in selected_activities
+        }
+        used_activities = {activity.activity_id for activity in selected_activities}
         used_restaurants = {selected_candidate[2].restaurant_id}
 
         for profile in ALTERNATIVE_SCORING_PROFILES:
@@ -521,7 +527,7 @@ class PlanningEngine:
             used_pairs.add(self._candidate_pair_key(candidate))
             used_activities.add(candidate[1].activity_id)
             used_restaurants.add(candidate[2].restaurant_id)
-            alternatives.append(self._alternative_payload(candidate, profile, context, quality_report, search_radius_km))
+            alternatives.append(self._alternative_payload(candidate, profile, context, candidates, quality_report, search_radius_km))
 
         if len(alternatives) < len(ALTERNATIVE_SCORING_PROFILES):
             for candidate in self._alternative_candidates(candidates, selected_candidate):
@@ -529,8 +535,10 @@ class PlanningEngine:
                     break
                 if self._candidate_pair_key(candidate) in used_pairs:
                     continue
-                alternatives.append(self._alternative_payload(candidate, BALANCED_PROFILE, context, quality_report, search_radius_km))
+                alternatives.append(self._alternative_payload(candidate, BALANCED_PROFILE, context, candidates, quality_report, search_radius_km))
                 used_pairs.add(self._candidate_pair_key(candidate))
+                used_activities.add(candidate[1].activity_id)
+                used_restaurants.add(candidate[2].restaurant_id)
 
         return alternatives
 
@@ -566,7 +574,17 @@ class PlanningEngine:
         for candidate in ranked:
             if self._candidate_pair_key(candidate) not in used_pairs:
                 return candidate
-        return ranked[0] if ranked else None
+        return None
+
+    def _activities_from_candidates(self, candidates: list[CandidateTuple]) -> list[Activity]:
+        activities: list[Activity] = []
+        seen: set[str] = set()
+        for _, activity, _, _, _ in candidates:
+            if activity.activity_id in seen:
+                continue
+            activities.append(activity)
+            seen.add(activity.activity_id)
+        return activities
 
     def _candidate_pair_key(self, candidate: CandidateTuple) -> tuple[str, str]:
         return candidate[1].activity_id, candidate[2].restaurant_id
@@ -610,6 +628,7 @@ class PlanningEngine:
         candidate: CandidateTuple,
         profile: CandidateScoringProfile,
         context: PlanningContext,
+        candidate_pool: list[CandidateTuple],
         quality_report: CandidateQualityReport | None = None,
         search_radius_km: float | None = None,
     ) -> dict:
@@ -618,24 +637,36 @@ class PlanningEngine:
         score = self._weighted_candidate_score(activity, restaurant, route, context, profile)
         route_options = self._route_options_for_candidate(route, candidate[4])
         selected_route = next((item for item in route_options if item.selected), route_options[0])
+        budget_minutes = self._time_budget_minutes(context)
+        activity_pool = self._activities_from_candidates(candidate_pool)
+        chain = self._select_activity_chain(
+            activity_pool,
+            context,
+            budget_minutes,
+            anchor_activity=activity,
+            end_restaurant=restaurant,
+        )
+        if not chain:
+            chain = [activity]
         plan = self._build_plan(
             context,
-            [activity],
+            chain,
             restaurant,
             selected_route,
             route_options,
-            [],
+            self._routes_between_chain(chain, context, self._allowed_transport_modes(context.intent.scenario_tags)),
             [],
             [self._alternative_reason(profile, activity, restaurant, route)],
             quality_report,
             search_radius_km,
         )
-        plan.title = f"{profile.label}：{activity.name} + {restaurant.name}"
+        activity_title = " → ".join(item.name for item in chain)
+        plan.title = f"{profile.label}：{activity_title} + {restaurant.name}"
         return {
             "strategy": profile.key,
             "label": profile.label,
             "description": profile.description,
-            "title": f"{activity.name} + {restaurant.name}",
+            "title": f"{activity_title} + {restaurant.name}",
             "reason": self._alternative_reason(profile, activity, restaurant, route),
             "tradeoff": self._alternative_tradeoff(profile),
             "activity": {
@@ -647,6 +678,18 @@ class PlanningEngine:
                 "tags": activity.tags,
                 "provider": activity.provider,
             },
+            "activities": [
+                {
+                    "id": item.activity_id,
+                    "name": item.name,
+                    "category": item.category,
+                    "location": item.location,
+                    "distance_km": item.distance_km,
+                    "tags": item.tags,
+                    "provider": item.provider,
+                }
+                for item in chain
+            ],
             "restaurant": {
                 "id": restaurant.restaurant_id,
                 "name": restaurant.name,

@@ -13,7 +13,7 @@ from app.agent.longcat_intent_parser import LongCatIntentParser
 from app.agent.longcat_response_generator import LongCatResponseGenerator
 from app.agent.orchestrator import LocalPlannerAgent
 from app.agent.participant_constraints import ParticipantConstraintBuilder
-from app.agent.planner import PlanningEngine
+from app.agent.planner import BALANCED_PROFILE, PlanningEngine
 from app.agent.response_generator import ResponseGenerator
 from app.agent.strategy import LongCatStrategyBuilder, PersonaStrategyBuilder
 from app.domain.models import Activity, Constraint, Coordinates, ParticipantProfile, PlanningIntent, Restaurant, RouteOption, to_plain
@@ -623,6 +623,46 @@ class PlanningRankingTest(unittest.TestCase):
         restaurant_ids = [candidate[2].restaurant_id for candidate in pool]
         self.assertEqual(len(set(restaurant_ids)), 3)
         self.assertLessEqual(restaurant_ids.count("restaurant_noodle"), 2)
+
+    def test_best_weighted_candidate_returns_none_when_all_pairs_are_used(self) -> None:
+        intent = IntentParser().parse("今天下午附近走走，顺便吃饭。")
+        context = ContextBuilder().build(ParticipantConstraintBuilder().normalize(intent), USER_CONTEXT)
+        self.assertNotIsInstance(context, dict)
+        activity = Activity(
+            activity_id="activity_only",
+            name="附近公园",
+            category="leisure:park",
+            location="附近",
+            coordinates=Coordinates(39.99, 116.48),
+            distance_km=0.5,
+            duration_minutes=60,
+            capacity_left=10,
+            tags=["stroll_friendly"],
+        )
+        restaurant = Restaurant(
+            restaurant_id="restaurant_only",
+            name="附近小馆",
+            location="附近",
+            coordinates=Coordinates(39.991, 116.481),
+            distance_km=0.6,
+            available=True,
+            table_size=4,
+            wait_minutes=0,
+            tags=["proper_meal"],
+        )
+        route = RouteOption("家", "附近公园", "walking", 8, 0.6, 0, 0.7, 0.6)
+        candidate = (10.0, activity, restaurant, route, [route])
+
+        selected = PlanningEngine(MockLocalLifeProvider())._best_weighted_candidate(
+            [candidate],
+            BALANCED_PROFILE,
+            context,
+            {("activity_only", "restaurant_only")},
+            {"activity_only"},
+            {"restaurant_only"},
+        )
+
+        self.assertIsNone(selected)
 
     def test_bestie_profile_prefers_chat_and_photo_place(self) -> None:
         intent = PlanningIntent(
@@ -1798,6 +1838,30 @@ class LocalPlannerAgentTest(unittest.TestCase):
         self.assertTrue(all("score_parts" in item for item in alternatives))
         self.assertTrue(all("tradeoff" in item for item in alternatives))
         self.assertTrue(all(item.get("plan", {}).get("plan_id") for item in alternatives))
+
+        main_schedule = response["data"]["schedule"]
+        main_activity_names = [
+            item["name"]
+            for item in main_schedule
+            if item["type"] == "activity" and not item["name"].startswith("餐后")
+        ]
+        main_restaurant = next(item["name"] for item in main_schedule if item["type"] == "restaurant")
+        seen_pairs = {(activity_name, main_restaurant) for activity_name in main_activity_names}
+        for alternative in alternatives:
+            pair = (alternative["activity"]["name"], alternative["restaurant"]["name"])
+            self.assertNotIn(pair, seen_pairs)
+            seen_pairs.add(pair)
+
+            alternative_plan = alternative["plan"]
+            alternative_activities = [
+                item
+                for item in alternative_plan["schedule"]
+                if item["type"] == "activity" and not item["name"].startswith("餐后")
+            ]
+            self.assertGreaterEqual(len(alternative_activities), 2)
+            self.assertGreaterEqual(len(alternative.get("activities", [])), 2)
+            self.assertGreaterEqual(schedule_span_minutes(alternative_plan["schedule"]), 240)
+            self.assertLessEqual(schedule_span_minutes(alternative_plan["schedule"]), 360)
 
     def test_weighted_alternative_plan_can_be_confirmed(self) -> None:
         agent = test_agent()
