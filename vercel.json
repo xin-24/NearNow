@@ -1,10 +1,17 @@
 {
-    "$schema": "https://openapi.vercel.sh/vercel.json",
-    "buildCommand": "cd web && npm ci && npm run build",
-    "functions": {
-        "app/main.py": {
-            "includeFiles": "web/dist/**",
-            "excludeFiles": "{tests/**,web/node_modules/**,web/src/**,web-legacy/**,.pytest_cache/**}"
-        }
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cd web && npm ci && npm run build",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
     }
+  ],
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "web/dist/**",
+      "excludeFiles": "{tests/**,web/node_modules/**,web/src/**,web-legacy/**,.pytest_cache/**}",
+      "maxDuration": 30
+    }
+  }
 }
