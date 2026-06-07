@@ -148,20 +148,42 @@ class PlanningEngine:
 
         candidates.sort(key=lambda item: item[0], reverse=True)
 
-        budget_minutes = self._time_budget_minutes(context)
-        chain = self._select_activity_chain(activities, context, budget_minutes)
-        if not chain:
-            chain = [candidates[0][1]]
+        selected_candidate = candidates[0]
+        selection_reasoning: list[str] = []
+        if self.candidate_selector is not None and len(candidates) > 1:
+            try:
+                selector_candidates = self._candidate_selection_pool(candidates, MAX_SELECTOR_CANDIDATES)
+                decision = self.candidate_selector.decide(context, selector_candidates)
+                selected_candidate = self._candidate_from_decision(decision, selector_candidates)
+                selection_reasoning = decision.reasoning
+            except LongCatAPIError:
+                pass
 
-        restaurant = self._select_restaurant_for_chain(restaurants, chain[-1], context)
-        if not restaurant:
-            restaurant = candidates[0][2]
+        budget_minutes = self._time_budget_minutes(context)
+        chain = self._select_activity_chain(
+            activities,
+            context,
+            budget_minutes,
+            anchor_activity=selected_candidate[1],
+            end_restaurant=selected_candidate[2],
+        )
+        if not chain:
+            chain = [selected_candidate[1]]
+
+        restaurant = selected_candidate[2]
 
         first_activity = chain[0]
         first_activity_routes: list[RouteOption] = []
+        if first_activity.activity_id == selected_candidate[1].activity_id:
+            first_activity_routes = selected_candidate[4]
+            origin_route = selected_candidate[3]
+        else:
+            origin_route = None
         for candidate in candidates:
             if candidate[1].activity_id == first_activity.activity_id:
                 first_activity_routes = candidate[4]
+                if origin_route is None:
+                    origin_route = candidate[3]
                 break
         if not first_activity_routes:
             try:
@@ -176,22 +198,12 @@ class PlanningEngine:
                 return self._fallback_plan(context, activities, restaurants, quality_report)
         if not first_activity_routes:
             return self._fallback_plan(context, activities, restaurants, quality_report)
-        origin_route = self._select_route(first_activity_routes, context)
+        if origin_route is None:
+            origin_route = self._select_route(first_activity_routes, context)
         for route in first_activity_routes:
             route.selected = route is origin_route
 
         inter_routes = self._routes_between_chain(chain, context, modes)
-
-        selected_candidate = candidates[0]
-        selection_reasoning: list[str] = []
-        if self.candidate_selector is not None and len(candidates) > 1:
-            try:
-                selector_candidates = self._candidate_selection_pool(candidates, MAX_SELECTOR_CANDIDATES)
-                decision = self.candidate_selector.decide(context, selector_candidates)
-                selected_candidate = self._candidate_from_decision(decision, selector_candidates)
-                selection_reasoning = decision.reasoning
-            except LongCatAPIError:
-                pass
 
         alternatives = self._weighted_alternatives(
             candidates,
@@ -325,6 +337,8 @@ class PlanningEngine:
         activities: list[Activity],
         context: PlanningContext,
         budget_minutes: int,
+        anchor_activity: Activity | None = None,
+        end_restaurant: Restaurant | None = None,
     ) -> list[Activity]:
         if not activities:
             return []
@@ -339,8 +353,11 @@ class PlanningEngine:
             reverse=True,
         )
 
-        chain: list[Activity] = [scored[0]]
-        used_ids = {scored[0].activity_id}
+        anchor = None
+        if anchor_activity is not None:
+            anchor = next((item for item in eligible if item.activity_id == anchor_activity.activity_id), None)
+        chain: list[Activity] = [anchor or scored[0]]
+        used_ids = {chain[0].activity_id}
 
         for _ in range(target - 1):
             best: Activity | None = None
@@ -350,10 +367,16 @@ class PlanningEngine:
                     continue
                 base_score = self._activity_score(candidate, context)
                 prox = max(0, 10 - distance_km(chain[-1].coordinates, candidate.coordinates))
-                combined = base_score + prox * 1.5
+                meal_prox = 0.0
+                if end_restaurant is not None:
+                    meal_prox = max(0, 10 - distance_km(candidate.coordinates, end_restaurant.coordinates))
+                combined = base_score + prox * 1.5 + meal_prox
                 est_inter_travel = max(5, round(distance_km(chain[-1].coordinates, candidate.coordinates) * 5))
                 accumulated = sum(a.duration_minutes for a in chain) + est_inter_travel
-                remaining_travel_est = max(5, round(candidate.distance_km * 4))
+                if end_restaurant is not None:
+                    remaining_travel_est = max(5, round(distance_km(candidate.coordinates, end_restaurant.coordinates) * 4))
+                else:
+                    remaining_travel_est = max(5, round(candidate.distance_km * 4))
                 if accumulated + candidate.duration_minutes + remaining_travel_est + MEAL_BUDGET_MINUTES > budget_minutes:
                     continue
                 if combined > best_score:
