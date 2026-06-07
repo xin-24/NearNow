@@ -156,6 +156,7 @@ export NEARNOW_STORAGE_BACKEND=mysql
 ## 文档
 
 - [总体设计](docs/design.md) — 架构、Agent 流程、Planning 策略
+- [比赛设计文档](docs/competition_design.md) — 2 页内交付版，覆盖 Planning、工具链路、异常处理和 Demo 边界
 - [API 契约](docs/api_contract.md) — 请求响应结构与错误码
 - [开发指南](docs/development_guide.md) — 技术栈、目录职责、测试策略
 - [竞品调研](docs/ai_agent_benchmark.md) — 可借鉴的 Agent 产品能力

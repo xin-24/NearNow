@@ -313,16 +313,16 @@ Mock 模式：
 | 确认后一键下单/预约/送蛋糕鲜花 | ✅ Mock 有 book_activity + reserve + notify | 已修复 |
 | 把计划发给同行人 | ✅ send_notification 已实现 | 已修复 |
 | 完整 Tool 实现代码（含 Mock API） | ✅ 完成 | 已修复 |
-| 设计文档 ≤2 页 | ❌ 不存在 | **阻塞** |
+| 设计文档 ≤2 页 | ✅ `docs/competition_design.md` | 已修复 |
 | 备选方案不包含无关场景 | ✅ mock 标签过滤已生效 | 已修复 |
 
 ### 评分维度分析
 
 **创新性（较强）**：AI Agent 编排（意图解析→策略→搜索→评分→执行）、备选方案对比、时间轴可编辑、交通方式切换、美团/点评 handoff 跳转。从”搜索推荐”到”帮你做完”的 Agent 范式转变是核心创新点。
 
-**完整性（接近完成）**：多活动串联已实现（2 个活动，约 3.6-3.9 小时）、多策略合并已实现、mock 标签过滤已生效、设计文档不存在。
+**完整性（接近完成）**：多活动串联、4-6 小时时长、主/备选方案、多策略合并、mock 标签过滤和 2 页内比赛设计文档均已实现。
 
-**应用效果（前端好后端弱）**：前端 7 个视图完整流程、地图、时间轴编辑、交通切换、执行回执 — 演示效果好。但后端方案时长不足、备选方案可能重复。
+**应用效果（较完整）**：前端 7 个视图完整流程、地图、时间轴编辑、交通切换、执行回执演示效果完整；后端已补齐 4-6 小时时长、主/备选一致性、备选去重和多活动 pending action 对齐。
 
 **商业价值（有潜力）**：美团/点评 handoff 跳转、同行人通知、预约订座闭环已实现。
 
@@ -368,11 +368,11 @@ Mock 模式：
 
 验证：纯 kid 场景只返回 kid_friendly 活动，纯 pet 场景只返回 pet_friendly 活动，low_calorie 场景只返回低卡/轻食餐厅。
 
-### 阻塞 4：设计文档 ≤2 页不存在 🔴
+### 阻塞 4：比赛设计文档 ≤2 页 ✅ 已修复
 
 **根因**：`docs/competition_design.md` 未创建。现有 `docs/design.md` 有 528 行，远超 2 页限制。
 
-**修复方向**：从 `docs/design.md` 精简出 2 页版本，覆盖 Planning 策略、工具调用链路、异常处理机制。内容应基于实际实现而非设计理想。
+**修复内容**（已完成）：新增 `docs/competition_design.md`，覆盖 Demo 目标与边界、Planning 策略、工具调用链路、异常处理机制、Mock 与真实模式边界；内容基于当前已实现能力，不写未落地的真实交易能力。
 
 ### 阻塞 5：备选方案可能与主方案重复 ✅ 已修复
 
@@ -427,9 +427,10 @@ Mock 模式：
    - 要求：按 schedule 中 activity 顺序或 `target/provider_place_id` 精确同步和删除对应 action，避免多活动方案确认后执行错误。
    - 修复：`web/src/utils/route.ts` 新增统一的 action 与 schedule 匹配逻辑，优先按 `provider_place_id/activity_id/restaurant_id`，其次按 `target`，最后按时间轴顺序兜底；同步时跳过餐后缓冲活动。`web/src/views/ProposalView.tsx` 在切换备选、切换交通、手动改时间、删除节点后都会同步 pending action；删除活动或餐厅时只移除对应的单个预约/订座 action。`preparePlanForRouteEditing()` 也移出渲染期，改为初始化可编辑 plan 时执行。验证：`cd web && npm run build` 通过。
 
-7. **设计文档仍是比赛硬缺口（P0）**
-   - 现状：`docs/competition_design.md` 不存在。
+7. **设计文档仍是比赛硬缺口（P0，已修复）**
+   - 原现状：缺少比赛交付版短设计文档。
    - 要求：新增 2 页内比赛设计文档，必须覆盖 Planning 策略、工具调用链路、异常处理机制和真实/Mock 边界；内容以当前实现为准，不写未落地能力。
+   - 修复：已新增 `docs/competition_design.md`，并在 README 文档入口中补充链接。
 
 ## 全面审查发现的其他问题
 
@@ -440,7 +441,7 @@ Mock 模式：
 | `context_builder.py` | 39-41 | 坐标缺失时静默使用北京默认坐标，上海用户会得到北京结果 | P0 |
 | `orchestrator.py` | 25-38 | PlanStore 内存泄漏，无 TTL/淘汰机制 | P1 |
 | `orchestrator.py` | 56-57 | `self.planner` 和 `self.executor` 是死代码，每次调用都新建实例 | P2 |
-| `planner.py` | 368 | 备选方案可能重复（已在阻塞 5 中说明） | P1 |
+| `planner.py` | 368 | 备选方案可能重复（已修复，详见阻塞 5） | 已修复 |
 | `planner.py` | 228-246 | `_merge_activities` 和 `_merge_restaurants` 代码重复 | P2 |
 | `planner.py` | 380 | proximity 分数使用魔数 18 | P2 |
 | `location_provider.py` | 91 | OSM 逆地理编码截断坐标到 2 位小数，精度丢失约 1km | P1 |
@@ -514,13 +515,9 @@ Mock 模式：
 
 已完成。详见阻塞 5 修复内容。
 
-### 第五步：创建比赛设计文档（阻塞 4）
+### 第五步：创建比赛设计文档（阻塞 4）✅ 已完成
 
-创建 `docs/competition_design.md`，控制在 2 页以内，包含：
-- Planning 策略：意图解析 → 画像策略 → 候选搜索 → 组合评分 → 时间轴生成。
-- 工具调用链路：resolve_location → search_activities → search_restaurants → calculate_routes → build_plan → execute_actions。
-- 异常处理：缺少出发地、候选不足、餐厅无位、活动满员、LLM 降级。
-- 当前 Demo 范围和真实生产化边界。
+已完成。详见阻塞 4 修复内容。
 
 ### 第六步：补主场景测试
 
