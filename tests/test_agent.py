@@ -1562,6 +1562,10 @@ class LocalPlannerAgentTest(unittest.TestCase):
 
                 self.assertGreaterEqual(span, 240)
                 self.assertLessEqual(span, 360)
+                activity_starts = {item["name"]: item["start_time"] for item in schedule if item["type"] == "activity"}
+                for action in response["data"]["pending_actions"]:
+                    if action["type"] == "book_activity":
+                        self.assertEqual(activity_starts[action["target"]], action["payload"]["start_time"])
 
     def test_child_constraints_are_preferences_when_real_tags_are_sparse(self) -> None:
         intent = IntentParser().parse("下午和老婆孩子、朋友出去玩几个小时，别离家太远。")
@@ -1714,6 +1718,13 @@ class LocalPlannerAgentTest(unittest.TestCase):
         self.assertIsNotNone(stored)
         self.assertEqual("walking", stored.schedule[0].transport_mode)
         self.assertTrue(next(route for route in stored.route_options if route.mode == "walking").selected)
+        activity_starts = {item.name: item.start_time for item in stored.schedule if item.type == "activity"}
+        restaurant = next(item for item in stored.schedule if item.type == "restaurant")
+        for action in stored.pending_actions:
+            if action.type == "book_activity":
+                self.assertEqual(activity_starts[action.target], action.payload["start_time"])
+            if action.type == "reserve_restaurant":
+                self.assertEqual(restaurant.start_time, action.payload["arrival_time"])
 
     def test_missing_origin_is_recoverable(self) -> None:
         agent = test_agent()

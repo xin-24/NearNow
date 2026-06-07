@@ -395,10 +395,11 @@ Mock 模式：
    - 要求：主方案 schedule 第一个节点 `start_time` 到最后一个节点 `end_time` 必须稳定 `>= 4 小时`，且不超过题目 6 小时上限。
    - 建议：调整 `PlanningEngine._target_activity_count()`、`_select_activity_chain()`、餐厅用餐时长或增加餐后轻活动/缓冲段；新增端到端测试锁定 `>= 240 分钟`。
 
-2. **多活动 pending action 时间错误（P0）**
+2. **多活动 pending action 时间错误（P0，已修复）**
    - 现象：实测家庭+朋友场景第二个活动 `创意市集手作体验` 的日程开始是 `15:50`，但 `book_activity` payload 中 `start_time` 是 `15:35`。
    - 根因：`app/agent/planner.py` 中 `_build_plan()` 生成多个活动预约时用 `act_arrive = add_minutes(act_arrive, min(activity.duration_minutes, 90))` 推算，没有使用真实 schedule，也没有计入活动间 travel。
    - 要求：每个 `book_activity` 的 `start_time` 必须和对应 activity schedule item 的 `start_time` 一致。`app/agent/orchestrator.py`、前端 `web/src/utils/route.ts` 的同步逻辑也要支持多个活动。
+   - 修复：`app/agent/planner.py` 初次生成时记录每个活动真实 schedule start_time 并写入对应 `book_activity`；`app/agent/orchestrator.py` 后端确认切换交通时按 action target 对齐 activity schedule；`web/src/utils/route.ts` 前端本地切换路线时逐个同步多个活动预约时间；`web/src/views/ProposalView.tsx` 删除单个活动时只移除对应预约动作。新增测试覆盖比赛主场景初次生成和确认切换交通后的预约时间对齐。
 
 3. **朋友场景“总共 4 个人”被算成 5 人（P0）**
    - 现象：输入“今天下午和朋友出去玩，总共4个人，2男2女，安排4-6小时”时，pending action 的 `party_size` 为 5。

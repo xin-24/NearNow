@@ -694,6 +694,7 @@ class PlanningEngine:
 
         current_time = start
         schedule: list[ScheduleItem] = []
+        activity_start_times: dict[str, str] = {}
         arrive_first = add_minutes(current_time, origin_route.duration_minutes)
         schedule.append(
             ScheduleItem(
@@ -712,6 +713,7 @@ class PlanningEngine:
 
         for i, activity in enumerate(activity_chain):
             act_duration = activity.duration_minutes
+            activity_start_times[activity.activity_id] = current_time
             act_end = add_minutes(current_time, act_duration)
             schedule.append(
                 ScheduleItem(
@@ -797,7 +799,6 @@ class PlanningEngine:
         final_end = self._append_duration_padding(schedule, context, restaurant, dinner_end, target_plan_end)
 
         pending_actions: list[PendingAction] = []
-        act_arrive = arrive_first
         for activity in activity_chain:
             if activity.reservation_required:
                 pending_actions.append(
@@ -808,11 +809,10 @@ class PlanningEngine:
                         payload={
                             "activity_id": activity.activity_id,
                             "party_size": intent.party_size,
-                            "start_time": act_arrive,
+                            "start_time": activity_start_times.get(activity.activity_id, arrive_first),
                         },
                     )
                 )
-            act_arrive = add_minutes(act_arrive, min(activity.duration_minutes, 90))
 
         if restaurant.reservation_required or self._supports_restaurant_handoff(restaurant):
             payload = {

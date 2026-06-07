@@ -96,11 +96,16 @@ export function selectRoute(plan: Plan, mode: string): void {
 }
 
 function syncPendingActionTimes(plan: Plan): void {
-  const activity = plan.schedule.find((item) => item.type === "activity");
+  const activities = plan.schedule.filter((item) => item.type === "activity");
+  const activityByName = new Map(activities.map((item) => [item.name, item]));
   const restaurant = plan.schedule.find((item) => item.type === "restaurant");
+  let activityIndex = 0;
   plan.pending_actions.forEach((action) => {
-    if (action.type === "book_activity" && activity) {
+    if (action.type === "book_activity") {
+      const activity = activityByName.get(action.target) || activities[activityIndex];
+      if (!activity) return;
       action.payload.start_time = activity.start_time;
+      activityIndex += 1;
     }
     if (action.type === "reserve_restaurant" && restaurant) {
       action.payload.arrival_time = restaurant.start_time;

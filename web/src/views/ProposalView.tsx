@@ -93,8 +93,8 @@ export function ProposalView({ plan, onEdit, onConfirm, onRouteChange, onPlanUpd
       updated.schedule.splice(index, 1);
       if (removed.type === "activity" || removed.type === "restaurant") {
         updated.pending_actions = updated.pending_actions.filter((a) => {
-          if (removed.type === "activity" && a.type === "book_activity") return false;
-          if (removed.type === "restaurant" && a.type === "reserve_restaurant") return false;
+          if (removed.type === "activity" && a.type === "book_activity") return a.target !== removed.name;
+          if (removed.type === "restaurant" && a.type === "reserve_restaurant") return a.target !== removed.name;
           return true;
         });
       }
