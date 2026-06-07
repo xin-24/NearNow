@@ -83,7 +83,11 @@ class IntentParser:
                 ParticipantProfile(
                     id="friends",
                     relation="friend_group",
-                    count=self._parse_group_count(message, default=4),
+                    count=self._parse_group_count(
+                        message,
+                        default=4,
+                        existing_people_count=self._current_party_size(participants),
+                    ),
                     constraints=[Constraint("activity", "group_friendly", "medium")],
                 )
             )
@@ -119,7 +123,11 @@ class IntentParser:
                 ParticipantProfile(
                     id=relation,
                     relation=relation,
-                    count=self._parse_group_count(message, default=6),
+                    count=self._parse_group_count(
+                        message,
+                        default=6,
+                        existing_people_count=self._current_party_size(participants),
+                    ),
                     constraints=[
                         Constraint("activity", "group_friendly", "high"),
                         Constraint("transport", "transit_accessible", "medium"),
@@ -290,9 +298,25 @@ class IntentParser:
         match = re.search(r"(\d{1,2})\s*岁", message)
         return int(match.group(1)) if match else None
 
-    def _parse_group_count(self, message: str, default: int) -> int:
+    def _parse_group_count(self, message: str, default: int, existing_people_count: int = 1) -> int:
+        total_count = self._parse_total_party_count(message)
+        if total_count is not None:
+            return max(1, total_count - existing_people_count)
         match = re.search(r"(\d{1,2})\s*(?:个|位)?(?:朋友|同事|人)", message)
         return int(match.group(1)) if match else default
+
+    def _parse_total_party_count(self, message: str) -> int | None:
+        total_match = re.search(r"(?:总共|一共|总人数|总计|共)\s*(\d{1,2})\s*(?:个|位)?人", message)
+        if total_match:
+            return int(total_match.group(1))
+
+        gender_match = re.search(r"(\d{1,2})\s*男\s*(\d{1,2})\s*女", message)
+        if gender_match:
+            return int(gender_match.group(1)) + int(gender_match.group(2))
+        return None
+
+    def _current_party_size(self, participants: list[ParticipantProfile]) -> int:
+        return sum(max(0, participant.count) for participant in participants if participant.relation != "pet") or 1
 
     def _diet_constraints(self, message: str) -> list[Constraint]:
         constraints: list[Constraint] = []

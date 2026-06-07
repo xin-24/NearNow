@@ -1016,6 +1016,30 @@ class CandidateSelectorTest(unittest.TestCase):
         self.assertEqual("ride_hailing", decision.route_mode)
         self.assertIn("低强度", decision.reasoning[0])
 
+    def test_planning_engine_uses_selected_candidate_as_main_plan_anchor(self) -> None:
+        intent = ParticipantConstraintBuilder().normalize(IntentParser().parse("今天下午附近走走，顺便吃饭。"))
+        context = ContextBuilder().build(intent, USER_CONTEXT, PersonaStrategyBuilder().build(intent))
+        self.assertNotIsInstance(context, dict)
+        client = StubLongCatClient(
+            content=json.dumps(
+                {
+                    "option_id": "option_2",
+                    "route_mode": "walking",
+                    "reasoning": ["选择器明确偏向安静活动和安静餐厅"],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        plan = PlanningEngine(SelectorAnchorProvider(), LongCatCandidateSelector(client)).generate_plan(context)
+
+        activity_names = [item.name for item in plan.schedule if item.type == "activity"]
+        restaurant_name = next(item.name for item in plan.schedule if item.type == "restaurant")
+
+        self.assertEqual("模型选择活动", activity_names[0])
+        self.assertEqual("模型选择餐厅", restaurant_name)
+        self.assertIn("安静活动", plan.selection_reasoning[0])
+
 
 class LongCatIntegrationTest(unittest.TestCase):
     def test_load_env_file_sets_longcat_key_without_overriding_existing_env(self) -> None:
@@ -1481,6 +1505,106 @@ class PetTakeawayProvider(PetPossibleProvider):
         ]
 
 
+class SelectorAnchorProvider:
+    provider_name = "mock"
+
+    def search_activities(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Activity]:
+        return [
+            Activity(
+                activity_id="activity_rule_top",
+                name="规则高分活动",
+                category="light_walk",
+                location="楼下广场",
+                coordinates=Coordinates(39.996, 116.482),
+                distance_km=0.4,
+                duration_minutes=70,
+                capacity_left=20,
+                tags=["stroll_friendly", "low_walking", "outdoor"],
+            ),
+            Activity(
+                activity_id="activity_selector_choice",
+                name="模型选择活动",
+                category="quiet_space",
+                location="安静空间",
+                coordinates=Coordinates(39.99, 116.49),
+                distance_km=3.0,
+                duration_minutes=70,
+                capacity_left=20,
+                tags=["quiet"],
+            ),
+        ]
+
+    def search_restaurants(
+        self,
+        tags: list[str],
+        party_size: int,
+        radius_km: float,
+        origin: Coordinates | None = None,
+    ) -> list[Restaurant]:
+        return [
+            Restaurant(
+                restaurant_id="restaurant_rule_top",
+                name="规则高分餐厅",
+                location="楼下餐厅",
+                coordinates=Coordinates(39.9961, 116.4821),
+                distance_km=0.4,
+                available=True,
+                table_size=8,
+                wait_minutes=0,
+                tags=["proper_meal", "group_table"],
+            ),
+            Restaurant(
+                restaurant_id="restaurant_selector_choice",
+                name="模型选择餐厅",
+                location="安静餐厅",
+                coordinates=Coordinates(39.9902, 116.4902),
+                distance_km=3.1,
+                available=True,
+                table_size=8,
+                wait_minutes=0,
+                tags=["quiet"],
+            ),
+        ]
+
+    def calculate_routes(
+        self,
+        origin_name: str,
+        origin: Coordinates,
+        destination_name: str,
+        destination: Coordinates,
+        modes: list[str],
+    ) -> list[RouteOption]:
+        distance = max(abs(origin.lat - destination.lat) * 111 + abs(origin.lng - destination.lng) * 85, 0.5)
+        return [
+            RouteOption(
+                from_name=origin_name,
+                to_name=destination_name,
+                mode="walking",
+                duration_minutes=max(5, round(distance * 8)),
+                distance_km=round(distance, 1),
+                estimated_cost=0,
+                comfort_score=0.75,
+                kid_friendly_score=0.7,
+                route_geometry=[origin, destination],
+            )
+        ]
+
+    def book_activity(self, activity_id: str, payload: dict) -> dict:
+        return {"status": "ready"}
+
+    def reserve_restaurant(self, restaurant_id: str, payload: dict) -> dict:
+        return {"status": "ready"}
+
+    def send_notification(self, payload: dict) -> dict:
+        return {"status": "ready"}
+
+
 def to_intent_payload(intent: PlanningIntent) -> dict:
     return {
         "start_time": intent.start_time,
@@ -1538,6 +1662,20 @@ class IntentParserTest(unittest.TestCase):
         self.assertIn("bestie", relations)
         self.assertIn("bestie", intent.scenario_tags)
 
+    def test_total_friend_party_count_includes_self(self) -> None:
+        intent = IntentParser().parse("今天下午和朋友出去玩，总共4个人，2男2女，安排4-6小时")
+
+        self.assertEqual(4, intent.party_size)
+        friend_group = next(participant for participant in intent.participants if participant.relation == "friend_group")
+        self.assertEqual(3, friend_group.count)
+
+    def test_explicit_friend_count_excludes_self(self) -> None:
+        intent = IntentParser().parse("今天下午和4个朋友出去玩，安排4-6小时")
+
+        self.assertEqual(5, intent.party_size)
+        friend_group = next(participant for participant in intent.participants if participant.relation == "friend_group")
+        self.assertEqual(4, friend_group.count)
+
 
 class LocalPlannerAgentTest(unittest.TestCase):
     def test_competition_mock_plans_are_at_least_four_hours(self) -> None:
@@ -1547,12 +1685,12 @@ class LocalPlannerAgentTest(unittest.TestCase):
             ),
             default_mode="mock",
         )
-        messages = [
-            "今天下午想和老婆孩子、朋友出去玩几个小时，别离家太远，老婆最近在减肥，孩子5岁",
-            "今天下午和朋友出去玩，总共4个人，2男2女，安排4-6小时",
+        scenarios = [
+            ("今天下午想和老婆孩子、朋友出去玩几个小时，别离家太远，老婆最近在减肥，孩子5岁", 7),
+            ("今天下午和朋友出去玩，总共4个人，2男2女，安排4-6小时", 4),
         ]
 
-        for message in messages:
+        for message, expected_party_size in scenarios:
             with self.subTest(message=message):
                 response = agent.plan({"message": message, "mode": "mock", "user_context": USER_CONTEXT})
 
@@ -1566,6 +1704,8 @@ class LocalPlannerAgentTest(unittest.TestCase):
                 for action in response["data"]["pending_actions"]:
                     if action["type"] == "book_activity":
                         self.assertEqual(activity_starts[action["target"]], action["payload"]["start_time"])
+                    if "party_size" in action["payload"]:
+                        self.assertEqual(expected_party_size, action["payload"]["party_size"])
 
     def test_child_constraints_are_preferences_when_real_tags_are_sparse(self) -> None:
         intent = IntentParser().parse("下午和老婆孩子、朋友出去玩几个小时，别离家太远。")

@@ -384,7 +384,7 @@ Mock 模式：
 
 本轮复查命令：
 
-- `python3 -m unittest`：通过 61 个测试。
+- `python3 -m unittest`：通过 64 个测试。
 - `cd web && npm run build`：通过生产构建。
 - 当前未提交改动：`app/agent/planner.py` 将 `MEAL_BUDGET_MINUTES` 从 55 改为 45；`app/providers/mock_provider.py` 为 `创意市集手作体验`、`桌游密室体验馆` 增加 `kid_friendly` 标签；`claude.md` 为未跟踪文件。
 
@@ -401,14 +401,16 @@ Mock 模式：
    - 要求：每个 `book_activity` 的 `start_time` 必须和对应 activity schedule item 的 `start_time` 一致。`app/agent/orchestrator.py`、前端 `web/src/utils/route.ts` 的同步逻辑也要支持多个活动。
    - 修复：`app/agent/planner.py` 初次生成时记录每个活动真实 schedule start_time 并写入对应 `book_activity`；`app/agent/orchestrator.py` 后端确认切换交通时按 action target 对齐 activity schedule；`web/src/utils/route.ts` 前端本地切换路线时逐个同步多个活动预约时间；`web/src/views/ProposalView.tsx` 删除单个活动时只移除对应预约动作。新增测试覆盖比赛主场景初次生成和确认切换交通后的预约时间对齐。
 
-3. **朋友场景“总共 4 个人”被算成 5 人（P0）**
+3. **朋友场景“总共 4 个人”被算成 5 人（P0，已修复）**
    - 现象：输入“今天下午和朋友出去玩，总共4个人，2男2女，安排4-6小时”时，pending action 的 `party_size` 为 5。
    - 根因：`IntentParser._parse_group_count()` 将“4个人”解析为朋友组人数，再加上 `self=1`。
    - 要求：识别“总共/一共/总人数/总共4个人”等表达时，`party_size` 应为 4；纯“和4个朋友”才应表示朋友 4 人 + 自己 1 人。需要补朋友主场景测试。
+   - 修复：`app/agent/intent_parser.py` 新增总人数识别，支持 `总共/一共/总人数/总计/共 N 人` 和 `2男2女`，按已解析固定参与者扣减朋友/同事组人数；保留“和 4 个朋友”表示朋友 4 人 + 自己 1 人。新增 parser 单测和比赛主场景端到端 party_size 断言。实测朋友场景 pending actions 均为 `party_size=4`。
 
-4. **主方案选择与候选选择器不一致（P1）**
+4. **主方案选择与候选选择器不一致（P1，已修复）**
    - 现象：`selected_candidate` 可以由 LongCat 或候选评分选出，但主方案随后又用 `_select_activity_chain()` 独立重选活动和餐厅，导致 `selection_reasoning`、备选方案和最终主方案来源不完全一致。
    - 要求：主方案应以 `selected_candidate` 为锚点扩展活动链，或在多活动链维度构造候选并统一评分/选择，避免解释和结果脱节。
+   - 修复：`app/agent/planner.py` 现在先确定评分/LongCat 选出的 `selected_candidate`，再以该候选的 activity 作为活动链锚点、以该候选的 restaurant 作为主餐厅扩展时间轴；补活动时同时考虑活动间距离和到选中餐厅的距离。新增测试构造“规则评分第一”和“选择器指定 option_2”不一致的场景，断言主方案使用选择器指定活动和餐厅。
 
 5. **备选方案仍需去重并支持多活动（P1）**
    - 现象：`_best_weighted_candidate()` 在所有候选耗尽时仍可能回退 `ranked[0]`；备选 plan 当前只用单活动链，与主方案多活动体验不一致。
